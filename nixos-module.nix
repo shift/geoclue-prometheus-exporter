@@ -9,15 +9,9 @@ with lib;
 let
   cfg = config.services.geoclue-prometheus-exporter;
   
-  # Use simple condition checks to avoid circular references
-  hasAlloyModule = hasAttrByPath ["services" "grafana-alloy-laptop"] config;
-  alloyEnabled = hasAlloyModule && config.services.grafana-alloy-laptop.enable or false;
-  hasScrapeConfigs = hasAlloyModule && hasAttrByPath ["services" "grafana-alloy-laptop" "scrapeConfigs"] config;
-  
   # Target to use for scraping based on bind address
   isLocalhost = cfg.bind == "127.0.0.1" || cfg.bind == "localhost";
   target = if isLocalhost then "localhost:${toString cfg.port}" else "${cfg.bind}:${toString cfg.port}";
-  
 in {
   # Define the options for the service
   options.services.geoclue-prometheus-exporter = {
@@ -37,11 +31,6 @@ in {
       default = 9090;
       description = "Port to bind the metrics server to.";
     };
-    registerWithAlloy = mkOption {
-      type = types.bool;
-      default = alloyEnabled;
-      description = "Register this exporter with Grafana Alloy if it's enabled.";
-    };
   };
 
   # A single config block that is applied if the service is enabled
@@ -52,23 +41,6 @@ in {
       geoclue2.appConfig."geoclue-prometheus-exporter" = {
         isAllowed = true;
         isSystem = true;
-      };
-
-      # Conditionally configure Grafana Alloy integration
-      grafana-alloy-laptop = mkIf (cfg.registerWithAlloy && alloyEnabled && hasScrapeConfigs) {
-        scrapeConfigs = [
-          {
-            job_name = "geoclue";
-            targets = [ target ];
-            metrics_path = "/metrics";
-            scrape_interval = "30s"; # Geolocation doesn't change frequently
-            scrape_timeout = "10s";
-            labels = {
-              service = "geoclue";
-              instance = config.networking.hostName;
-            };
-          }
-        ];
       };
     };
 
@@ -85,12 +57,6 @@ in {
           User = "nobody";
           Group = "nogroup";
         };
-      };
-      
-      # Alloy service dependencies (only if integration is enabled)
-      grafana-alloy = mkIf (cfg.registerWithAlloy && alloyEnabled && hasScrapeConfigs) {
-        after = [ "geoclue-prometheus-exporter.service" ];
-        requires = [ "geoclue-prometheus-exporter.service" ];
       };
     };
 

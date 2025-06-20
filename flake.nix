@@ -10,10 +10,16 @@
   outputs = { self, nixpkgs, flake-utils, rust-overlay }:
     let
       # Helper function to create a NixOS module with inputs
-      nixosModule = { pkgs, lib, config, ... }@args:
+      nixosModule = { pkgs, lib, config, ... }:
         import ./nixos-module.nix {
           inherit pkgs lib config;
           package = self.packages.${pkgs.system}.default;
+        };
+        
+      # Separate module for alloy integration
+      alloyModule = { pkgs, lib, config, ... }:
+        import ./nixos-module-alloy.nix {
+          inherit pkgs lib config;
         };
         
       # Run all tests in one go
@@ -87,15 +93,13 @@
         geoclue-exporter-test = import ./nix/vm-test.nix {
           inherit pkgs;
           nodes = {
-            machine = { config, pkgs, ... }: {
+            machine = { pkgs, ... }: {
               imports = [ self.nixosModules.default ];
               services.geoclue-prometheus-exporter = {
                 enable = true;
                 bind = "127.0.0.1";
                 port = 9090;
                 openFirewall = true;
-                # Don't try to register with alloy in the test
-                registerWithAlloy = false;
               };
               # Enable geoclue service for testing
               services.geoclue2 = {
@@ -156,6 +160,8 @@
       nixosModules = {
         default = nixosModule;
         geoclue-prometheus-exporter = nixosModule;
+        # Separate module for alloy integration
+        withAlloyIntegration = { imports = [ nixosModule alloyModule ]; };
       };
       
       # Add NixOS tests
@@ -163,15 +169,13 @@
         basic = import ./nix/vm-test.nix {
           pkgs = nixpkgs.legacyPackages.x86_64-linux;
           nodes = {
-            machine = { config, pkgs, ... }: {
+            machine = { pkgs, ... }: {
               imports = [ self.nixosModules.default ];
               services.geoclue-prometheus-exporter = {
                 enable = true;
                 bind = "0.0.0.0";  # Test with non-localhost binding
                 port = 9090;
                 openFirewall = true;
-                # Don't try to register with alloy in the test
-                registerWithAlloy = false;
               };
               # Enable geoclue service for testing
               services.geoclue2 = {
