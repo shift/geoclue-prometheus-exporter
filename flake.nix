@@ -8,6 +8,30 @@
   };
 
   outputs = { self, nixpkgs, flake-utils, rust-overlay }:
+    let
+      # Helper function to create a NixOS module with inputs
+      nixosModule = { pkgs, lib, config, ... }@args:
+        import ./nixos-module.nix {
+          inherit pkgs lib config;
+          package = self.packages.${pkgs.system}.default;
+        };
+        
+      # Run all tests in one go
+      runAllTests = system: pkgs: pkgs.writeShellScriptBin "run-all-tests" ''
+        set -e
+        echo "Running unit tests..."
+        cd ${self}
+        ${pkgs.cargo}/bin/cargo test
+        
+        echo "Running integration tests..."
+        ${pkgs.cargo}/bin/cargo test --test integration_test
+        
+        echo "Running VM tests..."
+        nix build .#checks.${system}.vm-test
+        
+        echo "All tests passed!"
+      '';
+    in
     flake-utils.lib.eachDefaultSystem (system:
       let
         overlays = [ (import rust-overlay) ];
@@ -15,8 +39,12 @@
           inherit system overlays;
         };
 
-        # Define the build inputs needed for the Rust package
-        geoclue-build-inputs = [ pkgs.pkg-config pkgs.dbus pkgs.openssl ];
+        # Expanded build inputs with proper OpenSSL
+        geoclue-build-inputs = [ 
+          pkgs.pkg-config 
+          pkgs.dbus 
+          pkgs.openssl
+        ];
         
         # Get Git hash for the current repository state
         gitHash = if self ? rev then pkgs.lib.substring 0 7 self.rev else "dirty";
@@ -24,7 +52,7 @@
         # Define the Rust package itself
         geoclue-prometheus-exporter = pkgs.rustPlatform.buildRustPackage rec {
           pname = "geoclue-prometheus-exporter";
-          version = "0.1.0";
+          version = "0.5.0";
 
           src = ./.;
 
@@ -32,63 +60,76 @@
 
           nativeBuildInputs = geoclue-build-inputs;
           
+          # Add openssl as a runtime dependency too
+          buildInputs = [ 
+            pkgs.openssl 
+          ];
+          
+          # Set environment variables for OpenSSL to be found
+          OPENSSL_DIR = "${pkgs.openssl.dev}";
+          OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+          OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
+          
           # Set build-time environment variables
           GIT_HASH = gitHash;
+          
+          # Run the test suite
+          doCheck = true;
+          
+          # Add test dependencies for the check phase
+          nativeCheckInputs = [
+            pkgs.dbus  # Needed for integration tests
+            pkgs.openssl
+          ];
+        };
+        
+        # Define a test for the geoclue-prometheus-exporter
+        geoclue-exporter-test = import ./nix/vm-test.nix {
+          inherit pkgs;
+          nodes = {
+            machine = { config, pkgs, ... }: {
+              imports = [ self.nixosModules.default ];
+              services.geoclue-prometheus-exporter = {
+                enable = true;
+                bind = "127.0.0.1";
+                port = 9090;
+                openFirewall = true;
+                # Don't try to register with alloy in the test
+                registerWithAlloy = false;
+              };
+              # Enable geoclue service for testing
+              services.geoclue2 = {
+                enable = true;
+                enableDemoAgent = true;
+              };
+            };
+          };
+          testScript = ''
+            start_all()
+            machine.wait_for_unit("geoclue-prometheus-exporter.service")
+            # Check that the service is running
+            machine.succeed("systemctl is-active geoclue-prometheus-exporter.service")
+            # Wait for the metrics endpoint to be available
+            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_'")
+            # Check that some metrics are present
+            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q 'up 1'")
+          '';
         };
       in
       {
         # The default package built by `nix build`
-        packages.default = geoclue-prometheus-exporter;
+        packages = {
+          default = geoclue-prometheus-exporter;
+          test-runner = runAllTests system pkgs;
+        };
 
-        # The NixOS module to configure the service
-        nixosModules.default = { config, lib, pkgs, ... }: {
-
-          # Define the options for the service
-          options.services.geoclue-prometheus-exporter = {
-            enable = lib.mkEnableOption "Enable the Geoclue exporter";
-            openFirewall = lib.mkOption {
-              type = lib.types.bool;
-              default = false;
-              description = "Open firewall for Prometheus to scrape metrics on port configured port.";
-            };
-            bind = lib.mkOption {
-              type = lib.types.str;
-              default = "127.0.0.1";
-              description = "Address to bind the metrics server to.";
-            };
-            port = lib.mkOption {
-              type = lib.types.int;
-              default = 9990;
-              description = "Port to bind the metrics server to.";
-            };
-          };
-
-          # A single config block that is applied if the service is enabled
-          config = lib.mkIf config.services.geoclue-prometheus-exporter.enable {
-            # Allow the exporter to access Geoclue2
-            services.geoclue2.appConfig."geoclue-prometheus-exporter" = {
-              isAllowed = true;
-              isSystem = true;
-            };
-
-            # Define the systemd service
-            systemd.services.geoclue-prometheus-exporter = {
-              description = "Geoclue to Prometheus Exporter";
-              wantedBy = [ "multi-user.target" ];
-              serviceConfig = {
-                ExecStart = "${geoclue-prometheus-exporter}/bin/geoclue-prometheus-exporter --bind-address ${config.services.geoclue-prometheus-exporter.bind} --metrics-port ${toString config.services.geoclue-prometheus-exporter.port}";
-                Restart = "on-failure";
-                RestartSec = "5s";
-                User = "nobody";
-                Group = "nogroup";
-              };
-            };
-
-            # Conditionally open the firewall
-            networking.firewall = lib.mkIf config.services.geoclue-prometheus-exporter.openFirewall {
-              allowedTCPPorts = [ config.services.geoclue-prometheus-exporter.port ];
-            };
-          };
+        # Run checks for the flake
+        checks = {
+          # Include the package build as a check
+          build = geoclue-prometheus-exporter;
+          
+          # Test the exporter in a VM
+          vm-test = geoclue-exporter-test;
         };
 
         # Development shell for `nix develop`
@@ -97,7 +138,55 @@
           packages = [
             # Get the Rust toolchain (cargo, rustc, etc.) from the overlay
             pkgs.rust-bin.stable.latest.default
+            # Include test dependencies
+            pkgs.cargo-nextest
+            pkgs.cargo-tarpaulin
+            # Include the test runner
+            self.packages.${system}.test-runner
           ] ++ geoclue-build-inputs; # Add build inputs like dbus and pkg-config
+          
+          # Also set the OpenSSL environment variables for the dev shell
+          OPENSSL_DIR = "${pkgs.openssl.dev}";
+          OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+          OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
         };
-      });
+      }
+    ) // {
+      # NixOS module that can be imported in NixOS configurations
+      nixosModules = {
+        default = nixosModule;
+        geoclue-prometheus-exporter = nixosModule;
+      };
+      
+      # Add NixOS tests
+      nixosTests = {
+        basic = import ./nix/vm-test.nix {
+          pkgs = nixpkgs.legacyPackages.x86_64-linux;
+          nodes = {
+            machine = { config, pkgs, ... }: {
+              imports = [ self.nixosModules.default ];
+              services.geoclue-prometheus-exporter = {
+                enable = true;
+                bind = "0.0.0.0";  # Test with non-localhost binding
+                port = 9090;
+                openFirewall = true;
+                # Don't try to register with alloy in the test
+                registerWithAlloy = false;
+              };
+              # Enable geoclue service for testing
+              services.geoclue2 = {
+                enable = true;
+                enableDemoAgent = true;
+              };
+            };
+          };
+          testScript = ''
+            start_all()
+            machine.wait_for_unit("geoclue-prometheus-exporter.service")
+            machine.succeed("systemctl is-active geoclue-prometheus-exporter.service")
+            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_'")
+          '';
+        };
+      };
+    };
 }
