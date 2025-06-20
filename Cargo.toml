@@ -1,6 +1,6 @@
 [package]
 name = "geoclue-prometheus-exporter"
-version = "0.5.0"
+version = "0.1.0"
 edition = "2021"
 authors = ["shift <shift@shift.id>"]
 description = "A Prometheus exporter for GeoClue2 location data"

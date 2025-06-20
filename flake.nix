@@ -58,7 +58,7 @@
         # Define the Rust package itself
         geoclue-prometheus-exporter = pkgs.rustPlatform.buildRustPackage rec {
           pname = "geoclue-prometheus-exporter";
-          version = "0.5.0";
+          version = "0.1.0";
 
           src = ./.;
 
