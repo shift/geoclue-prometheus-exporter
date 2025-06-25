@@ -129,16 +129,26 @@ fn setup_metrics(bind_address: &str, port: u16) -> Result<()> {
 
     // Define metrics
     metrics::describe_gauge!("up", "Indicates if the exporter is operational (1 = up)");
-    metrics::describe_gauge!("geoclue_latitude", "Latitude in degrees");
-    metrics::describe_gauge!("geoclue_longitude", "Longitude in degrees");
-    metrics::describe_gauge!("geoclue_accuracy", "Location accuracy in meters");
-    metrics::describe_gauge!("geoclue_altitude", "Altitude in meters above sea level (not available = -1)");
-    metrics::describe_gauge!("geoclue_speed", "Speed in meters per second");
-    metrics::describe_gauge!("geoclue_heading", "Heading in degrees from North");
+    metrics::describe_gauge!("geoclue_latitude", "Latitude in degrees (-1 = no data received)");
+    metrics::describe_gauge!("geoclue_longitude", "Longitude in degrees (-1 = no data received)");
+    metrics::describe_gauge!("geoclue_accuracy", "Location accuracy in meters (-1 = no data received)");
+    metrics::describe_gauge!("geoclue_altitude", "Altitude in meters above sea level (-1 = not available)");
+    metrics::describe_gauge!("geoclue_speed", "Speed in meters per second (-1 = no data received)");
+    metrics::describe_gauge!("geoclue_heading", "Heading in degrees from North (-1 = no data received)");
     metrics::describe_gauge!("geoclue_location_updates_received", "Number of location updates received");
     
     // Set the "up" metric to indicate the exporter is running
     metrics::gauge!("up").set(1.0);
+    
+    // Initialize all geoclue metrics with sentinel values so they appear in metrics output immediately
+    // Use -1 to indicate that no location data has been received yet (finite value that shows in Prometheus)
+    metrics::gauge!("geoclue_latitude").set(-1.0);
+    metrics::gauge!("geoclue_longitude").set(-1.0);
+    metrics::gauge!("geoclue_accuracy").set(-1.0);
+    metrics::gauge!("geoclue_altitude").set(-1.0); // -1 indicates not available as per description
+    metrics::gauge!("geoclue_speed").set(-1.0);
+    metrics::gauge!("geoclue_heading").set(-1.0);
+    metrics::gauge!("geoclue_location_updates_received").set(0.0);
     
     // Initialize process metrics collection
     // For metrics-process v2.4.0 we need to collect metrics manually
