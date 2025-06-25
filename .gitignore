@@ -1,2 +1,9 @@
 result
 target
+
+# VS Code user-specific settings (keep workspace config but not user settings)
+.vscode/settings.json
+
+# MCP and AI assistant temporary files
+.mcp-cache/
+.copilot-cache/

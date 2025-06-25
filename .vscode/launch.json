@@ -1,0 +1,74 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug geoclue-prometheus-exporter",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=geoclue-prometheus-exporter",
+                    "--package=geoclue-prometheus-exporter"
+                ],
+                "filter": {
+                    "name": "geoclue-prometheus-exporter",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "--help"
+            ],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "sourceLanguages": [
+                "rust"
+            ]
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=geoclue-prometheus-exporter",
+                    "--package=geoclue-prometheus-exporter"
+                ],
+                "filter": {
+                    "name": "geoclue-prometheus-exporter",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "sourceLanguages": [
+                "rust"
+            ]
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug integration tests",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--test=integration_tests"
+                ],
+                "filter": {
+                    "name": "integration_tests",
+                    "kind": "test"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}",
+            "console": "integratedTerminal",
+            "sourceLanguages": [
+                "rust"
+            ]
+        }
+    ]
+}

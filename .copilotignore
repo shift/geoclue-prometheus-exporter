@@ -1,0 +1,38 @@
+# Ignore sensitive files from GitHub Copilot suggestions
+*.key
+*.pem
+*.p12
+*.pfx
+.env
+.env.*
+secrets.*
+credentials.*
+config/secrets/
+.secrets/
+
+# Ignore large binary files
+target/
+result/
+*.so
+*.dylib
+*.dll
+*.exe
+
+# Ignore temporary files
+.tmp/
+temp/
+*.tmp
+*.temp
+
+# Ignore IDE specific files that may contain sensitive data
+.idea/
+.vscode/settings.json
+
+# Ignore build artifacts
+Cargo.lock
+dist/
+build/
+
+# Ignore logs that may contain sensitive information
+*.log
+logs/
