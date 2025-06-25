@@ -487,6 +487,9 @@ mod tests {
     #[test]
     fn test_should_log() {
         unsafe {
+            // Store the original log level to restore later
+            let original_level = LOG_LEVEL;
+            
             // Test Debug level
             LOG_LEVEL = LogLevel::Debug;
             assert!(should_log(LogLevel::Debug));
@@ -514,6 +517,9 @@ mod tests {
             assert!(!should_log(LogLevel::Info));
             assert!(!should_log(LogLevel::Warn));
             assert!(should_log(LogLevel::Error));
+            
+            // Restore original log level
+            LOG_LEVEL = original_level;
         }
     }
     
@@ -773,6 +779,9 @@ mod tests {
     #[test]
     fn test_should_log_all_combinations() {
         unsafe {
+            // Store the original log level to restore later
+            let original_level = LOG_LEVEL;
+            
             // Test all level combinations systematically
             let levels = [LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error];
             
@@ -795,6 +804,9 @@ mod tests {
                         global_level, message_level);
                 }
             }
+            
+            // Restore original log level
+            LOG_LEVEL = original_level;
         }
     }
 }
