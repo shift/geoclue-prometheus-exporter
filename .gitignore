@@ -1,2 +1,11 @@
 result
 target
+
+# Node.js dependencies for MCP servers
+mcp/node_modules/
+mcp/package-lock.json
+mcp/.npm/
+
+# Temporary files
+*.tmp
+*.log
