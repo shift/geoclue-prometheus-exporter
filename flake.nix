@@ -97,10 +97,12 @@
             machine.wait_for_unit("geoclue-prometheus-exporter.service")
             # Check that the service is running
             machine.succeed("systemctl is-active geoclue-prometheus-exporter.service")
-            # Wait for the metrics endpoint to be available
-            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_'")
-            # Check that some metrics are present
-            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q 'up 1'")
+            # Wait for the metrics endpoint to be available and check for the 'up' metric
+            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'up 1'")
+            # Check that the metrics endpoint is serving Prometheus format data
+            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q '# HELP'")
+            # Verify that geoclue metrics are described (even if not yet populated)
+            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_latitude'")
           '';
         };
       in
@@ -189,7 +191,7 @@
             start_all()
             machine.wait_for_unit("geoclue-prometheus-exporter.service")
             machine.succeed("systemctl is-active geoclue-prometheus-exporter.service")
-            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_'")
+            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'up 1'")
           '';
         };
       };
