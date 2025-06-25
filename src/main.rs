@@ -589,4 +589,212 @@ mod tests {
             assert_eq!(tracker_guard.received_updates, 2);
         }
     }
+
+    // Test setup_metrics with invalid addresses
+    #[test]
+    fn test_setup_metrics_invalid_address() {
+        // Test with malformed address
+        let result = setup_metrics("invalid-address", 9090);
+        assert!(result.is_err());
+        
+        // Test with very invalid address containing special characters
+        let result = setup_metrics("not-an-address%", 9090);
+        assert!(result.is_err());
+    }
+
+    // Test setup_metrics with valid addresses (just parse validation)
+    #[test] 
+    fn test_setup_metrics_address_parsing() {
+        // Test that address parsing works correctly by using unusual but valid ports
+        use std::sync::atomic::{AtomicU16, Ordering};
+        static PORT_COUNTER: AtomicU16 = AtomicU16::new(50000);
+        
+        let port = PORT_COUNTER.fetch_add(1, Ordering::SeqCst);
+        
+        // Test address parsing - may fail on server startup but should succeed parsing
+        // This tests the address parsing logic without requiring the server to actually start
+        let result = setup_metrics("127.0.0.1", port);
+        
+        // If it fails, it should be due to server startup, not address parsing
+        // So we can't assert success here as ports might be in use or permissions may be denied
+        // But we can test that the error message is about server startup, not address parsing
+        if result.is_err() {
+            let error_msg = format!("{}", result.unwrap_err());
+            // Should not contain "Failed to parse bind address"
+            assert!(!error_msg.contains("Failed to parse bind address"));
+        }
+    }
+
+    // Test log function with different levels and fields
+    #[test]
+    fn test_log_function() {
+        unsafe {
+            LOG_LEVEL = LogLevel::Debug;
+        }
+        
+        // Test logging with various field combinations
+        log("INFO", "test message", &[]);
+        log("ERROR", "error message", &[("key", "value".to_string())]);
+        log("DEBUG", "debug message", &[
+            ("field1", "value1".to_string()),
+            ("field2", "value2".to_string())
+        ]);
+        
+        // Test with unknown log level (should default to Info)
+        log("UNKNOWN", "unknown level", &[]);
+    }
+
+    // Test edge cases for set_gauge_if_valid
+    #[test]
+    fn test_set_gauge_if_valid_edge_cases() {
+        // Test boundary values
+        assert!(set_gauge_if_valid("latitude", 0.0));
+        assert!(set_gauge_if_valid("longitude", 0.0));
+        assert!(!set_gauge_if_valid("latitude", -1.0));
+        assert!(!set_gauge_if_valid("longitude", -1.7e308));
+        
+        // Test extreme values that should be valid
+        assert!(set_gauge_if_valid("accuracy", 1000.0));
+        assert!(!set_gauge_if_valid("speed", f64::NEG_INFINITY));
+        
+        // Test NaN values - NaN comparisons return false, so it will pass the check and return true
+        assert!(set_gauge_if_valid("altitude", f64::NAN));
+        
+        // Test positive infinity - the function checks value <= -1.7e308, so +inf should be valid
+        assert!(set_gauge_if_valid("heading", f64::INFINITY));
+    }
+
+    // Test AccuracyLevel enum values
+    #[test]
+    fn test_accuracy_level_values() {
+        // Test that enum values match GeoClue2 specification
+        assert_eq!(AccuracyLevel::None as u32, 0);
+        assert_eq!(AccuracyLevel::Country as u32, 1);
+        assert_eq!(AccuracyLevel::City as u32, 4);
+        assert_eq!(AccuracyLevel::Neighborhood as u32, 5);
+        assert_eq!(AccuracyLevel::Street as u32, 6);
+        assert_eq!(AccuracyLevel::Exact as u32, 8);
+    }
+
+    // Test LogLevel enum values 
+    #[test]
+    fn test_log_level_debug_trait() {
+        // Ensure Debug trait works for LogLevel
+        let level = LogLevel::Info;
+        let debug_str = format!("{:?}", level);
+        assert!(debug_str.contains("Info"));
+    }
+
+    // Test AccuracyLevelArg enum values
+    #[test]
+    fn test_accuracy_level_arg_debug_trait() {
+        // Ensure Debug trait works for AccuracyLevelArg
+        let level = AccuracyLevelArg::Street;
+        let debug_str = format!("{:?}", level);
+        assert!(debug_str.contains("Street"));
+    }
+
+    // Test version string components
+    #[test]
+    fn test_version_string_components() {
+        let version_str = get_version_string();
+        
+        // Test individual components
+        assert!(version_str.contains(PKG_NAME));
+        assert!(version_str.len() > PKG_NAME.len()); // Should be longer than just the name
+        
+        // Should contain version
+        assert!(version_str.contains(PKG_VERSION));
+        
+        // Should contain git hash or "unknown"
+        assert!(version_str.contains(GIT_HASH) || version_str.contains("unknown"));
+    }
+
+    // Test concurrent access to UpdateTracker
+    #[tokio::test]
+    async fn test_update_tracker_concurrency() {
+        let tracker = Arc::new(Mutex::new(UpdateTracker {
+            received_updates: 0,
+        }));
+        
+        let tracker_clone = tracker.clone();
+        
+        // Spawn multiple tasks to update concurrently
+        let handles: Vec<_> = (0..10).map(|_| {
+            let tracker_ref = tracker_clone.clone();
+            tokio::spawn(async move {
+                for _ in 0..10 {
+                    let mut guard = tracker_ref.lock().unwrap();
+                    guard.received_updates += 1;
+                }
+            })
+        }).collect();
+        
+        // Wait for all tasks to complete
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        
+        // Check final count
+        let final_count = tracker.lock().unwrap().received_updates;
+        assert_eq!(final_count, 100); // 10 tasks * 10 increments each
+    }
+
+    // Test all AccuracyLevelArg variants convert correctly
+    #[test]
+    fn test_all_accuracy_level_conversions() {
+        use std::mem;
+        
+        // Test all possible conversions
+        let none: AccuracyLevel = AccuracyLevelArg::None.into();
+        assert!(matches!(none, AccuracyLevel::None));
+        
+        let country: AccuracyLevel = AccuracyLevelArg::Country.into();
+        assert!(matches!(country, AccuracyLevel::Country));
+        
+        let city: AccuracyLevel = AccuracyLevelArg::City.into();
+        assert!(matches!(city, AccuracyLevel::City));
+        
+        let neighborhood: AccuracyLevel = AccuracyLevelArg::Neighborhood.into();
+        assert!(matches!(neighborhood, AccuracyLevel::Neighborhood));
+        
+        let street: AccuracyLevel = AccuracyLevelArg::Street.into();
+        assert!(matches!(street, AccuracyLevel::Street));
+        
+        let exact: AccuracyLevel = AccuracyLevelArg::Exact.into();
+        assert!(matches!(exact, AccuracyLevel::Exact));
+        
+        // Test enum sizes are reasonable 
+        assert!(mem::size_of::<AccuracyLevel>() <= 8);
+        assert!(mem::size_of::<AccuracyLevelArg>() <= 8);
+    }
+
+    // Test should_log with all combinations
+    #[test]
+    fn test_should_log_all_combinations() {
+        unsafe {
+            // Test all level combinations systematically
+            let levels = [LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error];
+            
+            for &global_level in &levels {
+                LOG_LEVEL = global_level;
+                
+                for &message_level in &levels {
+                    let should_log_result = should_log(message_level);
+                    
+                    // Check logic matches expected behavior
+                    let expected = match global_level {
+                        LogLevel::Debug => true,
+                        LogLevel::Info => message_level != LogLevel::Debug,
+                        LogLevel::Warn => message_level == LogLevel::Warn || message_level == LogLevel::Error,
+                        LogLevel::Error => message_level == LogLevel::Error,
+                    };
+                    
+                    assert_eq!(should_log_result, expected, 
+                        "Failed for global_level: {:?}, message_level: {:?}", 
+                        global_level, message_level);
+                }
+            }
+        }
+    }
 }
