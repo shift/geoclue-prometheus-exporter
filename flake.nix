@@ -118,8 +118,8 @@
           # Test the exporter in a VM
           vm-test = geoclue-exporter-test;
           
-          # Integration test suite
-          integration-tests = pkgs.runCommand "integration-tests" {
+          # All tests including integration tests that require binary compilation
+          all-tests = pkgs.runCommand "all-tests" {
             nativeBuildInputs = [ pkgs.cargo pkgs.rustc ] ++ geoclue-build-inputs;
             buildInputs = [ pkgs.openssl ];
             src = ./.;
@@ -131,41 +131,10 @@
           } ''
             cp -r $src/* .
             cp -r $src/.git . 2>/dev/null || true
-            cargo test --test integration_tests
-            touch $out
-          '';
-          
-          # Metrics validation tests
-          metrics-tests = pkgs.runCommand "metrics-tests" {
-            nativeBuildInputs = [ pkgs.cargo pkgs.rustc ] ++ geoclue-build-inputs;
-            buildInputs = [ pkgs.openssl ];
-            src = ./.;
-            CARGO_TARGET_DIR = "/tmp/cargo-target";
-            OPENSSL_DIR = "${pkgs.openssl.dev}";
-            OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
-            OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
-            GIT_HASH = gitHash;
-          } ''
-            cp -r $src/* .
-            cp -r $src/.git . 2>/dev/null || true
-            cargo test --test metrics_tests
-            touch $out
-          '';
-          
-          # Property-based tests
-          property-tests = pkgs.runCommand "property-tests" {
-            nativeBuildInputs = [ pkgs.cargo pkgs.rustc ] ++ geoclue-build-inputs;
-            buildInputs = [ pkgs.openssl ];
-            src = ./.;
-            CARGO_TARGET_DIR = "/tmp/cargo-target";
-            OPENSSL_DIR = "${pkgs.openssl.dev}";
-            OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
-            OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
-            GIT_HASH = gitHash;
-          } ''
-            cp -r $src/* .
-            cp -r $src/.git . 2>/dev/null || true
-            cargo test --test property_tests
+            # Build the binary first so integration tests can find it
+            cargo build
+            # Run all tests including integration tests
+            cargo test --all
             touch $out
           '';
         };
