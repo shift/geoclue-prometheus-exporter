@@ -21,22 +21,6 @@
         import ./nixos-module-alloy.nix {
           inherit pkgs lib config;
         };
-        
-      # Run all tests in one go
-      runAllTests = system: pkgs: pkgs.writeShellScriptBin "run-all-tests" ''
-        set -e
-        echo "Running unit tests..."
-        cd ${self}
-        ${pkgs.cargo}/bin/cargo test
-        
-        echo "Running integration tests..."
-        ${pkgs.cargo}/bin/cargo test --test integration_test
-        
-        echo "Running VM tests..."
-        nix build .#checks.${system}.vm-test
-        
-        echo "All tests passed!"
-      '';
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -124,16 +108,66 @@
         # The default package built by `nix build`
         packages = {
           default = geoclue-prometheus-exporter;
-          test-runner = runAllTests system pkgs;
         };
 
         # Run checks for the flake
         checks = {
-          # Include the package build as a check
+          # Include the package build as a check (this includes unit tests)
           build = geoclue-prometheus-exporter;
           
           # Test the exporter in a VM
           vm-test = geoclue-exporter-test;
+          
+          # Integration test suite
+          integration-tests = pkgs.runCommand "integration-tests" {
+            nativeBuildInputs = [ pkgs.cargo pkgs.rustc ] ++ geoclue-build-inputs;
+            buildInputs = [ pkgs.openssl ];
+            src = ./.;
+            CARGO_TARGET_DIR = "/tmp/cargo-target";
+            OPENSSL_DIR = "${pkgs.openssl.dev}";
+            OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+            OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
+            GIT_HASH = gitHash;
+          } ''
+            cp -r $src/* .
+            cp -r $src/.git . 2>/dev/null || true
+            cargo test --test integration_tests
+            touch $out
+          '';
+          
+          # Metrics validation tests
+          metrics-tests = pkgs.runCommand "metrics-tests" {
+            nativeBuildInputs = [ pkgs.cargo pkgs.rustc ] ++ geoclue-build-inputs;
+            buildInputs = [ pkgs.openssl ];
+            src = ./.;
+            CARGO_TARGET_DIR = "/tmp/cargo-target";
+            OPENSSL_DIR = "${pkgs.openssl.dev}";
+            OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+            OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
+            GIT_HASH = gitHash;
+          } ''
+            cp -r $src/* .
+            cp -r $src/.git . 2>/dev/null || true
+            cargo test --test metrics_tests
+            touch $out
+          '';
+          
+          # Property-based tests
+          property-tests = pkgs.runCommand "property-tests" {
+            nativeBuildInputs = [ pkgs.cargo pkgs.rustc ] ++ geoclue-build-inputs;
+            buildInputs = [ pkgs.openssl ];
+            src = ./.;
+            CARGO_TARGET_DIR = "/tmp/cargo-target";
+            OPENSSL_DIR = "${pkgs.openssl.dev}";
+            OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+            OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
+            GIT_HASH = gitHash;
+          } ''
+            cp -r $src/* .
+            cp -r $src/.git . 2>/dev/null || true
+            cargo test --test property_tests
+            touch $out
+          '';
         };
 
         # Development shell for `nix develop`
@@ -145,8 +179,6 @@
             # Include test dependencies
             pkgs.cargo-nextest
             pkgs.cargo-tarpaulin
-            # Include the test runner
-            self.packages.${system}.test-runner
           ] ++ geoclue-build-inputs; # Add build inputs like dbus and pkg-config
           
           # Also set the OpenSSL environment variables for the dev shell
