@@ -1,0 +1,25 @@
+{
+    "recommendations": [
+        "github.copilot",
+        "github.copilot-chat",
+        "rust-lang.rust-analyzer",
+        "jnoortheen.nix-ide",
+        "tamasfe.even-better-toml",
+        "vadimcn.vscode-lldb",
+        "serayuzgur.crates",
+        "dustypomerleau.rust-syntax",
+        "belfz.search-crates-io",
+        "davidanson.vscode-markdownlint",
+        "yzhang.markdown-all-in-one",
+        "redhat.vscode-yaml",
+        "ms-vscode.vscode-json",
+        "formulahendry.code-runner",
+        "eamodio.gitlens",
+        "ms-vscode.remote-containers",
+        "ms-vscode-remote.remote-ssh"
+    ],
+    "unwantedRecommendations": [
+        "ms-vscode.cpptools",
+        "ms-dotnettools.csharp"
+    ]
+}

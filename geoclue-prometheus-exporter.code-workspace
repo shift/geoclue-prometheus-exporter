@@ -1,0 +1,39 @@
+{
+    "folders": [
+        {
+            "name": "geoclue-prometheus-exporter",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "rust-analyzer.linkedProjects": [
+            "./Cargo.toml"
+        ],
+        "rust-analyzer.cargo.features": "all",
+        "rust-analyzer.cargo.allTargets": true,
+        "github.copilot.enable": {
+            "*": true,
+            "rust": true,
+            "nix": true,
+            "toml": true,
+            "markdown": true
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "github.copilot",
+            "github.copilot-chat",
+            "rust-lang.rust-analyzer",
+            "jnoortheen.nix-ide",
+            "tamasfe.even-better-toml"
+        ]
+    },
+    "launch": {
+        "version": "0.2.0",
+        "configurations": []
+    },
+    "tasks": {
+        "version": "2.0.0",
+        "tasks": []
+    }
+}

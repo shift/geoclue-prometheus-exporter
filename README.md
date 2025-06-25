@@ -2,6 +2,10 @@
 
 A Prometheus metrics exporter for GeoClue2 geolocation data on Linux systems.
 
+## Development Setup
+
+For an optimal development experience with GitHub Copilot and AI assistants, see the [MCP Setup Guide](docs/MCP_SETUP.md).
+
 ## Features
 
 - Exports geolocation metrics (latitude, longitude, accuracy, altitude, etc.) as Prometheus metrics

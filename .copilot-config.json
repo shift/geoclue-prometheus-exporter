@@ -1,0 +1,60 @@
+{
+  "github.copilot.advanced": {
+    "length": 500,
+    "temperature": 0.1,
+    "top_p": 1,
+    "stops": {
+      "rust": ["\n\n", "fn ", "struct ", "impl ", "enum "],
+      "nix": ["\n\n", "let ", "in ", "}"],
+      "toml": ["\n\n", "["],
+      "markdown": ["\n\n", "# ", "## "]
+    }
+  },
+  "github.copilot.enable": {
+    "*": true,
+    "plaintext": false,
+    "scminput": false
+  },
+  "github.copilot.editor.enableAutoCompletions": true,
+  "github.copilot.editor.enableCodeActions": true,
+  "github.copilot.conversation.localization": "auto",
+  "github.copilot.chat.welcomeMessage": "never",
+  "github.copilot.chat.useProjectTemplates": true,
+  "github.copilot.preferences.includeCodeBlockLanguageInCompletion": true,
+  "github.copilot.preferences.suggestMatchingBrackets": true,
+  "projectContext": {
+    "name": "geoclue-prometheus-exporter",
+    "description": "A Prometheus metrics exporter for GeoClue2 geolocation data on Linux systems",
+    "language": "rust",
+    "framework": "tokio",
+    "buildSystem": "cargo",
+    "packageManager": "nix",
+    "testing": "cargo test",
+    "architecture": "async/await",
+    "dependencies": [
+      "tokio",
+      "zbus",
+      "metrics",
+      "anyhow",
+      "clap",
+      "chrono"
+    ],
+    "patterns": [
+      "Use anyhow::Result for error handling",
+      "Use tokio for async operations",
+      "Use zbus for D-Bus communication",
+      "Use metrics crate for Prometheus exports",
+      "Follow Rust naming conventions",
+      "Use structured logging with key-value pairs",
+      "Keep functions focused and single-purpose",
+      "Use type-safe argument parsing with clap",
+      "Handle errors gracefully and provide context"
+    ],
+    "codeStyle": {
+      "indentation": "4 spaces",
+      "lineLength": 100,
+      "formatter": "rustfmt",
+      "linter": "clippy"
+    }
+  }
+}

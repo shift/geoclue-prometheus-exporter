@@ -1,0 +1,44 @@
+{
+    "rust-analyzer.cargo.buildScripts.enable": true,
+    "rust-analyzer.check.command": "check",
+    "rust-analyzer.check.allTargets": true,
+    "rust-analyzer.procMacro.enable": true,
+    "files.associations": {
+        "*.nix": "nix",
+        "*.toml": "toml"
+    },
+    "files.watcherExclude": {
+        "**/target/**": true,
+        "**/result/**": true
+    },
+    "search.exclude": {
+        "**/target": true,
+        "**/result": true,
+        "**/Cargo.lock": true
+    },
+    "github.copilot.enable": {
+        "*": true,
+        "rust": true,
+        "nix": true,
+        "toml": true,
+        "markdown": true,
+        "yaml": true,
+        "json": true
+    },
+    "editor.inlineSuggest.enabled": true,
+    "[rust]": {
+        "editor.defaultFormatter": "rust-lang.rust-analyzer",
+        "editor.formatOnSave": true
+    },
+    "[nix]": {
+        "editor.defaultFormatter": "jnoortheen.nix-ide",
+        "editor.formatOnSave": true
+    },
+    "[toml]": {
+        "editor.defaultFormatter": "tamasfe.even-better-toml",
+        "editor.formatOnSave": true
+    },
+    "[markdown]": {
+        "editor.wordWrap": "on"
+    }
+}

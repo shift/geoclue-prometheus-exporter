@@ -1,0 +1,52 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/home/runner/work/geoclue-prometheus-exporter/geoclue-prometheus-exporter"],
+      "env": {
+        "MCP_SERVER_NAME": "filesystem"
+      }
+    },
+    "github": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-github"],
+      "env": {
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}",
+        "MCP_SERVER_NAME": "github"
+      }
+    },
+    "rust-analyzer": {
+      "command": "rust-analyzer",
+      "args": ["--stdio"],
+      "env": {
+        "MCP_SERVER_NAME": "rust-analyzer",
+        "RUST_LOG": "info"
+      }
+    }
+  },
+  "defaults": {
+    "mcpServers": ["filesystem", "github", "rust-analyzer"]
+  },
+  "security": {
+    "allowedHosts": [
+      "localhost",
+      "127.0.0.1",
+      "github.com",
+      "api.github.com"
+    ],
+    "allowedCommands": [
+      "npx",
+      "rust-analyzer",
+      "cargo",
+      "rustc",
+      "rustfmt",
+      "clippy"
+    ],
+    "sandboxed": true,
+    "resourceLimits": {
+      "maxMemoryMB": 512,
+      "maxCpuPercent": 50,
+      "maxFileSize": "100MB"
+    }
+  }
+}
