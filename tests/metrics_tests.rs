@@ -47,26 +47,19 @@ async fn test_metrics_server_setup_logic() {
 
 #[tokio::test]
 async fn test_metrics_endpoint_basic() {
-    use std::time::Duration;
-    use tokio::time::timeout;
-    
-    // Basic test to check if we can make HTTP requests
-    // This doesn't depend on our metrics server
+    // Basic test to validate HTTP client functionality without external dependencies
+    // This tests that we can create an HTTP client and build requests
     let client = reqwest::Client::new();
     
-    // Test that the HTTP client works (using a reliable external service)
-    let response = timeout(Duration::from_secs(5), 
-        client.get("https://httpbin.org/status/200").send()).await;
+    // Test building a request (doesn't require actual network call)
+    let request = client.get("http://localhost:9090/metrics").build();
+    assert!(request.is_ok(), "Should be able to build HTTP request");
     
-    match response {
-        Ok(Ok(resp)) => {
-            assert!(resp.status().is_success(), "HTTP client should work");
-        }
-        Ok(Err(_)) | Err(_) => {
-            // Network errors are acceptable in test environment
-            println!("Network request failed (acceptable in test environment)");
-        }
-    }
+    let req = request.unwrap();
+    assert_eq!(req.method(), reqwest::Method::GET);
+    assert_eq!(req.url().host_str(), Some("localhost"));
+    assert_eq!(req.url().port(), Some(9090));
+    assert_eq!(req.url().path(), "/metrics");
 }
 
 #[cfg(test)]
