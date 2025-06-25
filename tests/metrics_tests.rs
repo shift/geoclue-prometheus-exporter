@@ -3,8 +3,6 @@
 //! These tests verify that the metrics server works correctly
 //! and exports the expected metrics.
 
-use std::time::Duration;
-use tokio::time::timeout;
 use serial_test::serial;
 
 #[tokio::test]
@@ -49,33 +47,22 @@ async fn test_metrics_server_setup_logic() {
 
 #[tokio::test]
 async fn test_metrics_endpoint_basic() {
-    // Basic test to check if we can make HTTP requests
-    // This doesn't depend on our metrics server
+    // Basic test to check if we can create an HTTP client
+    // This doesn't require external network access
     let client = reqwest::Client::new();
     
-    // Test that the HTTP client works (using a reliable external service)
-    let response = timeout(Duration::from_secs(5), 
-        client.get("https://httpbin.org/status/200").send()).await;
+    // Test that we can create a request builder (without sending)
+    let request_builder = client.get("http://127.0.0.1:9090/metrics");
     
-    match response {
-        Ok(Ok(resp)) => {
-            assert!(resp.status().is_success(), "HTTP client should work");
-        }
-        Ok(Err(_)) | Err(_) => {
-            // Network errors are acceptable in test environment
-            println!("Network request failed (acceptable in test environment)");
-        }
-    }
-}
-
-// Helper function to find an available port
-async fn find_available_port() -> u16 {
-    use std::sync::atomic::{AtomicU16, Ordering};
-    static PORT_COUNTER: AtomicU16 = AtomicU16::new(50000);
+    // Verify the request can be built
+    let request = request_builder.build();
+    assert!(request.is_ok(), "HTTP request should be buildable");
     
-    // Simple approach: increment port number
-    // In a real test environment, you might want to actually check if the port is available
-    PORT_COUNTER.fetch_add(1, Ordering::SeqCst)
+    let req = request.unwrap();
+    assert_eq!(req.method(), &reqwest::Method::GET);
+    assert_eq!(req.url().host_str(), Some("127.0.0.1"));
+    assert_eq!(req.url().port(), Some(9090));
+    assert_eq!(req.url().path(), "/metrics");
 }
 
 #[cfg(test)]
