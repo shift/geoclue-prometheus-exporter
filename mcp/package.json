@@ -1,0 +1,35 @@
+{
+  "name": "geoclue-prometheus-exporter-mcp",
+  "version": "0.5.0",
+  "description": "MCP servers for GeoClue Prometheus Exporter",
+  "main": "servers/metrics-server.js",
+  "scripts": {
+    "start:metrics": "node servers/metrics-server.js",
+    "start:config": "node servers/config-server.js", 
+    "start:monitoring": "node servers/monitoring-server.js",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "keywords": [
+    "mcp",
+    "prometheus",
+    "geoclue",
+    "monitoring",
+    "metrics"
+  ],
+  "author": "Vincent Palmer <shift@someone.section.me>",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^0.4.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/shift/geoclue-prometheus-exporter.git"
+  },
+  "bugs": {
+    "url": "https://github.com/shift/geoclue-prometheus-exporter/issues"
+  },
+  "homepage": "https://github.com/shift/geoclue-prometheus-exporter#readme"
+}

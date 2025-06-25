@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.claudedesktop.com/claude_desktop_config.json",
+  "mcpServers": {
+    "geoclue-metrics": {
+      "command": "node",
+      "args": ["./mcp/servers/metrics-server.js"],
+      "description": "Access to GeoClue Prometheus metrics and geolocation data",
+      "env": {
+        "GEOCLUE_HOST": "127.0.0.1",
+        "GEOCLUE_PORT": "9090"
+      }
+    },
+    "geoclue-config": {
+      "command": "node", 
+      "args": ["./mcp/servers/config-server.js"],
+      "description": "GeoClue service configuration management",
+      "env": {
+        "CONFIG_PATH": "./mcp/config.json"
+      }
+    },
+    "geoclue-monitoring": {
+      "command": "node",
+      "args": ["./mcp/servers/monitoring-server.js"],
+      "description": "GeoClue service health monitoring and diagnostics",
+      "env": {
+        "SERVICE_NAME": "geoclue-prometheus-exporter"
+      }
+    }
+  },
+  "globals": {
+    "description": "MCP servers for GeoClue Prometheus Exporter - provides AI agents with access to geolocation metrics, service configuration, and monitoring capabilities"
+  }
+}

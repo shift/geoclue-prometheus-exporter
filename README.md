@@ -8,6 +8,7 @@ A Prometheus metrics exporter for GeoClue2 geolocation data on Linux systems.
 - Configurable minimum accuracy level
 - Configurable metrics endpoint
 - Easily integrates with Grafana Alloy for laptop metrics
+- **MCP (Model Context Protocol) servers for AI agent integration**
 
 ## Dependencies
 
@@ -59,3 +60,39 @@ Add this flake to your NixOS configuration:
     };
   };
 }
+
+## MCP Server Integration
+
+This project includes Model Context Protocol (MCP) servers that enable AI agents to interact with the GeoClue Prometheus Exporter. The MCP servers provide:
+
+- **Metrics Server**: Access to Prometheus metrics and geolocation data
+- **Configuration Server**: Service configuration management
+- **Monitoring Server**: Health checks and system monitoring
+
+### Quick Start with MCP
+
+1. **Install Node.js dependencies:**
+   ```bash
+   cd mcp
+   npm install
+   ```
+
+2. **Configure your MCP client** (e.g., Claude Desktop):
+   ```json
+   {
+     "mcpServers": {
+       "geoclue-metrics": {
+         "command": "node",
+         "args": ["/path/to/geoclue-prometheus-exporter/mcp/servers/metrics-server.js"]
+       }
+     }
+   }
+   ```
+
+3. **Test the servers:**
+   ```bash
+   cd mcp
+   node test.js
+   ```
+
+See [mcp/README.md](mcp/README.md) for detailed documentation on the MCP servers.
