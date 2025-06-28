@@ -289,35 +289,61 @@ async fn setup_geoclue_connection(args: &Args) -> Result<GeoClueConnection> {
 fn is_permanent_error(error: &anyhow::Error, has_connected_before: bool) -> bool {
     let error_str = error.to_string().to_lowercase();
     
+    // Debug logging for error classification
+    log("DEBUG", "Classifying error", &[
+        ("error_str", error_str.clone()),
+        ("has_connected_before", has_connected_before.to_string()),
+    ]);
+    
     // Always permanent errors
     if error_str.contains("permission denied") ||
        error_str.contains("access denied") ||
        error_str.contains("invalid argument") ||
        error_str.contains("not permitted") {
+        log("DEBUG", "Error classified as always permanent", &[("reason", "permission/access".to_string())]);
         return true;
     }
     
     // If we've never connected before, be more conservative - treat more errors as permanent
     if !has_connected_before {
-        return error_str.contains("no such file or directory") ||
+        let is_permanent = error_str.contains("no such file or directory") ||
                error_str.contains("service not found") ||
                error_str.contains("serviceunknown") ||
                error_str.contains("service unknown") ||
                error_str.contains("name not found") ||
                (error_str.contains("failed to connect") && error_str.contains("dbus"));
+        log("DEBUG", "First connection error classification", &[
+            ("is_permanent", is_permanent.to_string()),
+            ("reason", "first_connection_conservative".to_string()),
+        ]);
+        return is_permanent;
     }
     
     // If we've connected before, most errors are retryable (service might restart)
     // Only treat clearly permanent configuration errors as non-retryable
-    error_str.contains("permission denied") ||
-    error_str.contains("access denied") ||
-    error_str.contains("invalid argument") ||
-    error_str.contains("not permitted")
+    let is_permanent = error_str.contains("permission denied") ||
+        error_str.contains("access denied") ||
+        error_str.contains("invalid argument") ||
+        error_str.contains("not permitted");
+    
+    log("DEBUG", "Reconnection error classification", &[
+        ("is_permanent", is_permanent.to_string()),
+        ("reason", "reconnection_liberal".to_string()),
+    ]);
+    
+    is_permanent
 }
 
 // Check if an error indicates a DBus disconnection that warrants reconnection
 fn is_disconnection_error(error: &anyhow::Error, has_connected_before: bool) -> bool {
-    !is_permanent_error(error, has_connected_before)
+    let is_disconnection = !is_permanent_error(error, has_connected_before);
+    
+    log("DEBUG", "Disconnection error check", &[
+        ("is_disconnection", is_disconnection.to_string()),
+        ("error", error.to_string()),
+    ]);
+    
+    is_disconnection
 }
 
 // Function to monitor location updates with proper error handling
