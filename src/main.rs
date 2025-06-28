@@ -294,7 +294,9 @@ fn is_disconnection_error(error: &anyhow::Error) -> bool {
     error_str.contains("noreply") ||
     error_str.contains("disconnected") ||
     error_str.contains("broken pipe") ||
-    error_str.contains("transport endpoint is not connected")
+    error_str.contains("transport endpoint is not connected") ||
+    error_str.contains("dbus.error.noreply") ||
+    error_str.contains("message recipient disconnected")
 }
 
 // Function to monitor location updates with proper error handling
@@ -573,10 +575,14 @@ async fn main() -> Result<()> {
                 }
             },
             Err(e) => {
+                log("WARN", "Failed to connect to GeoClue2", &[
+                    ("error", format!("{}", e)),
+                    ("retry_count", retry_count.to_string()),
+                ]);
+                
                 if is_disconnection_error(&e) {
-                    log("WARN", "Failed to connect to GeoClue2, will retry", &[
+                    log("INFO", "Error identified as disconnection, will retry", &[
                         ("error", format!("{}", e)),
-                        ("retry_count", retry_count.to_string()),
                     ]);
                 } else {
                     log("ERROR", "Non-recoverable error connecting to GeoClue2", &[
