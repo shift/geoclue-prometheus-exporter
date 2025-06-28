@@ -113,6 +113,12 @@ struct UpdateTracker {
     received_updates: u64,
 }
 
+// Structure to hold GeoClue2 connection components
+struct GeoClueConnection {
+    connection: Arc<Connection>,
+    client_path: zvariant::OwnedObjectPath,
+}
+
 // Global log level
 static mut LOG_LEVEL: LogLevel = LogLevel::Info;
 
@@ -272,56 +278,8 @@ fn set_gauge_if_valid(metric_name: &str, value: f64) -> bool {
     true
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
-    // Parse command line arguments
-    let args = Args::parse();
-    
-    // If --version-info flag is provided, display detailed version info and exit
-    if args.version_info {
-        println!("{}", get_version_string());
-        std::process::exit(0);
-    }
-    
-    // Set global log level
-    // Safety: This is safe because we only set it once at startup
-    unsafe {
-        LOG_LEVEL = args.log_level;
-    }
-    
-    // Set up metrics with the provided bind address and port
-    match setup_metrics(&args.bind_address, args.metrics_port) {
-        Ok(_) => {
-            log("INFO", &format!("{} metrics endpoint started", PKG_NAME), &[
-                ("endpoint", format!("http://{}:{}/metrics", args.bind_address, args.metrics_port)),
-                ("version", PKG_VERSION.to_string()),
-                ("build_hash", GIT_HASH.to_string()),
-                ("log_level", format!("{:?}", args.log_level)),
-            ]);
-        },
-        Err(e) => {
-            log("ERROR", &format!("Failed to start {} metrics endpoint", PKG_NAME), &[
-                ("error", format!("{}", e)),
-                ("bind_address", args.bind_address.clone()),
-                ("port", args.metrics_port.to_string()),
-            ]);
-            return Err(e);
-        }
-    }
-
-    log("DEBUG", "Command line arguments", &[
-        ("bind_address", args.bind_address.to_string()),
-        ("distance_threshold", args.distance_threshold.to_string()),
-        ("time_threshold", args.time_threshold.to_string()),
-        ("accuracy_level", format!("{:?}", args.accuracy_level)),
-        ("metrics_port", args.metrics_port.to_string()),
-    ]);
-
-    // Initialize update tracker
-    let tracker = Arc::new(Mutex::new(UpdateTracker {
-        received_updates: 0,
-    }));
-
+// Function to establish GeoClue2 connection and setup client
+async fn setup_geoclue_connection(args: &Args) -> Result<GeoClueConnection> {
     // Create a shared connection
     let connection = Arc::new(Connection::system().await?);
     log("INFO", "Connected to DBus system bus", &[]);
@@ -342,10 +300,6 @@ async fn main() -> Result<()> {
     ).await?;
     
     log("INFO", "Got client path", &[("path", format!("{}", client_path))]);
-
-    // Create the connection for the shutdown handler first (separate from the main connection)
-    let shutdown_connection = Arc::new(Connection::system().await?);
-    let shutdown_client_path = client_path.to_owned();
 
     // Create client proxy
     let client = zbus::Proxy::new(
@@ -381,52 +335,87 @@ async fn main() -> Result<()> {
     client.call::<_, _, ()>("Start", &()).await?;
     log("INFO", "Started GeoClue2 client", &[]);
 
+    Ok(GeoClueConnection {
+        connection,
+        client_path,
+    })
+}
+
+// Check if an error indicates a permanent failure that should not be retried
+fn is_permanent_error(error: &anyhow::Error, has_connected_before: bool) -> bool {
+    let error_str = error.to_string().to_lowercase();
+    
+    // Debug logging for error classification
+    log("DEBUG", "Classifying error", &[
+        ("error_str", error_str.clone()),
+        ("has_connected_before", has_connected_before.to_string()),
+    ]);
+    
+    // Always permanent errors
+    if error_str.contains("permission denied") ||
+       error_str.contains("access denied") ||
+       error_str.contains("invalid argument") ||
+       error_str.contains("not permitted") {
+        log("DEBUG", "Error classified as always permanent", &[("reason", "permission/access".to_string())]);
+        return true;
+    }
+    
+    // If we've never connected before, be more conservative - treat more errors as permanent
+    if !has_connected_before {
+        let is_permanent = error_str.contains("no such file or directory") ||
+               error_str.contains("service not found") ||
+               error_str.contains("serviceunknown") ||
+               error_str.contains("service unknown") ||
+               error_str.contains("name not found") ||
+               (error_str.contains("failed to connect") && error_str.contains("dbus"));
+        log("DEBUG", "First connection error classification", &[
+            ("is_permanent", is_permanent.to_string()),
+            ("reason", "first_connection_conservative".to_string()),
+        ]);
+        return is_permanent;
+    }
+    
+    // If we've connected before, most errors are retryable (service might restart)
+    // Only treat clearly permanent configuration errors as non-retryable
+    let is_permanent = error_str.contains("permission denied") ||
+        error_str.contains("access denied") ||
+        error_str.contains("invalid argument") ||
+        error_str.contains("not permitted");
+    
+    log("DEBUG", "Reconnection error classification", &[
+        ("is_permanent", is_permanent.to_string()),
+        ("reason", "reconnection_liberal".to_string()),
+    ]);
+    
+    is_permanent
+}
+
+// Check if an error indicates a DBus disconnection that warrants reconnection
+fn is_disconnection_error(error: &anyhow::Error, has_connected_before: bool) -> bool {
+    let is_disconnection = !is_permanent_error(error, has_connected_before);
+    
+    log("DEBUG", "Disconnection error check", &[
+        ("is_disconnection", is_disconnection.to_string()),
+        ("error", error.to_string()),
+    ]);
+    
+    is_disconnection
+}
+
+// Function to monitor location updates with proper error handling
+async fn monitor_location_updates(
+    geoclue_conn: &GeoClueConnection,
+    tracker: Arc<Mutex<UpdateTracker>>
+) -> Result<()> {
     log("INFO", "Waiting for location updates", &[]);
 
-    // Periodically collect process metrics
-    let _metrics_handle = tokio::spawn(async {
-        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(15));
-        loop {
-            interval.tick().await;
-            collect();
-        }
-    });
-
-    // Handle graceful shutdown - create a completely separate client for shutdown
-    tokio::spawn(async move {
-        if let Err(e) = ctrl_c().await {
-            log("ERROR", "Failed to listen for ctrl+c signal", &[("error", format!("{}", e))]);
-            return;
-        }
-        
-        log("INFO", "Shutdown signal received, stopping GeoClue2 client", &[]);
-        
-        // Create a new client proxy specifically for shutdown
-        match zbus::Proxy::new(
-            &shutdown_connection,
-            "org.freedesktop.GeoClue2",
-            &shutdown_client_path,
-            "org.freedesktop.GeoClue2.Client"
-        ).await {
-            Ok(shutdown_client) => {
-                // Call Stop on the client for clean shutdown
-                if let Err(e) = shutdown_client.call::<_, _, ()>("Stop", &()).await {
-                    log("ERROR", "Failed to stop GeoClue2 client", &[("error", format!("{}", e))]);
-                } else {
-                    log("INFO", "GeoClue2 client stopped successfully", &[]);
-                }
-            },
-            Err(e) => {
-                log("ERROR", "Failed to create shutdown client proxy", &[("error", format!("{}", e))]);
-            }
-        }
-        
-        // Set the "up" metric to 0 to indicate the exporter is shutting down
-        metrics::gauge!("up").set(0.0);
-        
-        // Exit the program
-        std::process::exit(0);
-    });
+    // Create client proxy from the connection
+    let client = zbus::Proxy::new(
+        &geoclue_conn.connection, 
+        "org.freedesktop.GeoClue2", 
+        &geoclue_conn.client_path, 
+        "org.freedesktop.GeoClue2.Client"
+    ).await?;
 
     // Monitor for location updates
     let mut location_updated_stream = client.receive_signal("LocationUpdated").await?;
@@ -458,7 +447,7 @@ async fn main() -> Result<()> {
 
         // Create a location proxy for this location
         let location = zbus::Proxy::new(
-            &connection, 
+            &geoclue_conn.connection, 
             "org.freedesktop.GeoClue2", 
             &new_path, 
             "org.freedesktop.GeoClue2.Location"
@@ -520,20 +509,216 @@ async fn main() -> Result<()> {
         set_gauge_if_valid("heading", head);
     }
 
-    // This is a fallback in case the location_updated_stream ends
-    log("WARN", "Location update stream ended", &[]);
+    // This indicates the stream has ended (likely due to disconnection)
+    Err(anyhow::anyhow!("Location update stream ended"))
+}
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    // Parse command line arguments
+    let args = Args::parse();
     
-    // Clean shutdown
-    client.call::<_, _, ()>("Stop", &()).await?;
-    log("INFO", "GeoClue2 client stopped", &[]);
+    // If --version-info flag is provided, display detailed version info and exit
+    if args.version_info {
+        println!("{}", get_version_string());
+        std::process::exit(0);
+    }
+    
+    // Set global log level
+    // Safety: This is safe because we only set it once at startup
+    unsafe {
+        LOG_LEVEL = args.log_level;
+    }
+    
+    // Set up metrics with the provided bind address and port
+    match setup_metrics(&args.bind_address, args.metrics_port) {
+        Ok(_) => {
+            log("INFO", &format!("{} metrics endpoint started", PKG_NAME), &[
+                ("endpoint", format!("http://{}:{}/metrics", args.bind_address, args.metrics_port)),
+                ("version", PKG_VERSION.to_string()),
+                ("build_hash", GIT_HASH.to_string()),
+                ("log_level", format!("{:?}", args.log_level)),
+            ]);
+        },
+        Err(e) => {
+            log("ERROR", &format!("Failed to start {} metrics endpoint", PKG_NAME), &[
+                ("error", format!("{}", e)),
+                ("bind_address", args.bind_address.clone()),
+                ("port", args.metrics_port.to_string()),
+            ]);
+            return Err(e);
+        }
+    }
 
-    // Set the "up" metric to 0 to indicate the exporter is shutting down
-    metrics::gauge!("up").set(0.0);
+    log("DEBUG", "Command line arguments", &[
+        ("bind_address", args.bind_address.to_string()),
+        ("distance_threshold", args.distance_threshold.to_string()),
+        ("time_threshold", args.time_threshold.to_string()),
+        ("accuracy_level", format!("{:?}", args.accuracy_level)),
+        ("metrics_port", args.metrics_port.to_string()),
+    ]);
 
+    // Initialize update tracker
+    let tracker = Arc::new(Mutex::new(UpdateTracker {
+        received_updates: 0,
+    }));
+
+    // Periodically collect process metrics
+    let _metrics_handle = tokio::spawn(async {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(15));
+        loop {
+            interval.tick().await;
+            collect();
+        }
+    });
+
+    // Shared variables for shutdown handling
+    let shutdown_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let shutdown_flag_clone = shutdown_flag.clone();
+
+    // Handle graceful shutdown
+    tokio::spawn(async move {
+        if let Err(e) = ctrl_c().await {
+            log("ERROR", "Failed to listen for ctrl+c signal", &[("error", format!("{}", e))]);
+            return;
+        }
+        
+        log("INFO", "Shutdown signal received", &[]);
+        shutdown_flag_clone.store(true, std::sync::atomic::Ordering::Relaxed);
+    });
+
+    // Main reconnection loop
+    let mut retry_count = 0;
+    let max_retry_delay = 60; // Maximum delay between retries in seconds
+    let mut has_connected_before = false;
+    
+    loop {
+        // Check if shutdown was requested
+        if shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            log("INFO", "Shutdown requested, exiting", &[]);
+            break;
+        }
+
+        // Attempt to connect to GeoClue2
+        match setup_geoclue_connection(&args).await {
+            Ok(geoclue_conn) => {
+                log("INFO", "Successfully connected to GeoClue2", &[]);
+                retry_count = 0; // Reset retry count on successful connection
+                has_connected_before = true; // Mark that we've connected successfully
+                
+                // Set up shutdown handler for this connection
+                let shutdown_connection = Arc::new(Connection::system().await?);
+                let shutdown_client_path = geoclue_conn.client_path.clone();
+                let shutdown_flag_monitor = shutdown_flag.clone();
+                
+                let shutdown_handle = tokio::spawn(async move {
+                    // Wait for shutdown signal
+                    while !shutdown_flag_monitor.load(std::sync::atomic::Ordering::Relaxed) {
+                        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                    }
+                    
+                    log("INFO", "Stopping GeoClue2 client for shutdown", &[]);
+                    
+                    // Create a new client proxy specifically for shutdown
+                    match zbus::Proxy::new(
+                        &shutdown_connection,
+                        "org.freedesktop.GeoClue2",
+                        &shutdown_client_path,
+                        "org.freedesktop.GeoClue2.Client"
+                    ).await {
+                        Ok(shutdown_client) => {
+                            // Call Stop on the client for clean shutdown
+                            if let Err(e) = shutdown_client.call::<_, _, ()>("Stop", &()).await {
+                                log("ERROR", "Failed to stop GeoClue2 client", &[("error", format!("{}", e))]);
+                            } else {
+                                log("INFO", "GeoClue2 client stopped successfully", &[]);
+                            }
+                        },
+                        Err(e) => {
+                            log("ERROR", "Failed to create shutdown client proxy", &[("error", format!("{}", e))]);
+                        }
+                    }
+                    
+                    // Set the "up" metric to 0 to indicate the exporter is shutting down
+                    metrics::gauge!("up").set(0.0);
+                });
+
+                // Monitor location updates
+                let monitoring_result = monitor_location_updates(&geoclue_conn, tracker.clone()).await;
+                
+                // Cancel shutdown handler if we're not shutting down
+                if !shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                    shutdown_handle.abort();
+                }
+                
+                // Handle monitoring result
+                match monitoring_result {
+                    Ok(_) => {
+                        // This shouldn't happen normally
+                        log("INFO", "Location monitoring completed normally", &[]);
+                        break;
+                    },
+                    Err(e) => {
+                        if shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
+                            log("INFO", "Location monitoring stopped due to shutdown", &[]);
+                            // Wait for shutdown handler to complete
+                            let _ = shutdown_handle.await;
+                            break;
+                        } else if is_disconnection_error(&e, has_connected_before) {
+                            log("WARN", "GeoClue2 connection lost, will attempt to reconnect", &[
+                                ("error", format!("{}", e)),
+                                ("retry_count", retry_count.to_string()),
+                            ]);
+                            // Continue to retry logic
+                        } else {
+                            log("ERROR", "Non-recoverable error in location monitoring", &[
+                                ("error", format!("{}", e)),
+                            ]);
+                            return Err(e);
+                        }
+                    }
+                }
+            },
+            Err(e) => {
+                log("WARN", "Failed to connect to GeoClue2", &[
+                    ("error", format!("{}", e)),
+                    ("retry_count", retry_count.to_string()),
+                ]);
+                
+                if is_disconnection_error(&e, has_connected_before) {
+                    log("INFO", "Error identified as disconnection, will retry", &[
+                        ("error", format!("{}", e)),
+                    ]);
+                } else {
+                    log("ERROR", "Non-recoverable error connecting to GeoClue2", &[
+                        ("error", format!("{}", e)),
+                    ]);
+                    return Err(e);
+                }
+            }
+        }
+
+        // Check if shutdown was requested before sleeping
+        if shutdown_flag.load(std::sync::atomic::Ordering::Relaxed) {
+            break;
+        }
+
+        // Calculate exponential backoff delay
+        retry_count += 1;
+        let delay = std::cmp::min(2_u64.pow(std::cmp::min(retry_count, 6)), max_retry_delay);
+        
+        log("INFO", "Waiting before reconnection attempt", &[
+            ("delay_seconds", delay.to_string()),
+            ("retry_count", retry_count.to_string()),
+        ]);
+        
+        tokio::time::sleep(tokio::time::Duration::from_secs(delay)).await;
+    }
+
+    log("INFO", "Exporter shutting down", &[]);
     Ok(())
 }
 
-// Include the test module
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -876,6 +1061,64 @@ mod tests {
             
             // Restore original log level
             LOG_LEVEL = original_level;
+        }
+    }
+    
+    // Test disconnection error detection
+    #[test]
+    fn test_is_disconnection_error() {
+        // Test errors for initial connection (has_connected_before = false)
+        let error = anyhow::anyhow!("I/O error: No such file or directory");
+        assert!(!is_disconnection_error(&error, false), "Should be permanent on first connect");
+        
+        let error = anyhow::anyhow!("Service not found: org.freedesktop.GeoClue2");
+        assert!(!is_disconnection_error(&error, false), "Should be permanent on first connect");
+        
+        // Test errors for reconnection (has_connected_before = true)
+        let error = anyhow::anyhow!("I/O error: No such file or directory");
+        assert!(is_disconnection_error(&error, true), "Should be retryable on reconnect");
+        
+        let error = anyhow::anyhow!("org.freedesktop.DBus.Error.NoReply: Message recipient disconnected from message bus without replying");
+        assert!(is_disconnection_error(&error, true), "Should be retryable on reconnect");
+        
+        // Test permanent errors (always permanent)
+        let error = anyhow::anyhow!("Permission denied");
+        assert!(!is_disconnection_error(&error, false), "Should be permanent");
+        assert!(!is_disconnection_error(&error, true), "Should be permanent");
+    }
+
+    // Test permanent error detection
+    #[test]
+    fn test_is_permanent_error() {
+        // Test errors that should be permanent on first connect
+        let permanent_errors = vec![
+            "Permission denied",
+            "Access denied", 
+            "Invalid argument",
+            "Not permitted",
+            "Service not found: org.freedesktop.GeoClue2",
+            "I/O error: No such file or directory",
+        ];
+        
+        for error_msg in permanent_errors {
+            let error = anyhow::anyhow!("{}", error_msg);
+            assert!(is_permanent_error(&error, false), "Failed to detect as permanent on first connect: {}", error_msg);
+        }
+        
+        // Test errors that should be retryable on reconnect
+        let retryable_on_reconnect = vec![
+            "I/O error: No such file or directory",
+            "Service not found: org.freedesktop.GeoClue2",
+            "org.freedesktop.DBus.Error.NoReply: Remote peer disconnected",
+        ];
+        
+        for error_msg in retryable_on_reconnect {
+            let error = anyhow::anyhow!("{}", error_msg);
+            if error_msg.contains("Permission") || error_msg.contains("Invalid argument") {
+                assert!(is_permanent_error(&error, true), "Should always be permanent: {}", error_msg);
+            } else {
+                assert!(!is_permanent_error(&error, true), "Should be retryable on reconnect: {}", error_msg);
+            }
         }
     }
 }

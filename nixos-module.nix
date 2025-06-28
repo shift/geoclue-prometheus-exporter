@@ -35,12 +35,22 @@ in {
 
   # A single config block that is applied if the service is enabled
   config = mkIf cfg.enable {
+    # Create a dedicated user for the service
+    users.users.geoclue-exporter = {
+      isSystemUser = true;
+      group = "geoclue-exporter";
+      description = "GeoClue Prometheus Exporter user";
+    };
+
+    users.groups.geoclue-exporter = {};
+
     # Group all services-related config together to avoid multiple definitions
     services = {
       # Main geoclue service configuration
       geoclue2.appConfig."geoclue-prometheus-exporter" = {
         isAllowed = true;
         isSystem = true;
+        # Don't specify users field to allow all users (default behavior)
       };
     };
 
@@ -50,12 +60,13 @@ in {
       geoclue-prometheus-exporter = {
         description = "Geoclue to Prometheus Exporter";
         wantedBy = [ "multi-user.target" ];
+        after = [ "geoclue.service" ];
         serviceConfig = {
           ExecStart = "${package}/bin/geoclue-prometheus-exporter --bind-address ${cfg.bind} --metrics-port ${toString cfg.port}";
           Restart = "on-failure";
           RestartSec = "5s";
-          User = "nobody";
-          Group = "nogroup";
+          User = "geoclue-exporter";
+          Group = "geoclue-exporter";
         };
       };
     };

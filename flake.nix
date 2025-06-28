@@ -90,6 +90,12 @@
                 enable = true;
                 enableDemoAgent = true;
               };
+              # Enable Avahi service for GeoClue2 network-based location detection
+              services.avahi = {
+                enable = true;
+                nssmdns4 = true;
+                nssmdns6 = true;
+              };
             };
           };
           testScript = ''
@@ -186,6 +192,12 @@
               services.geoclue2 = {
                 enable = true;
                 enableDemoAgent = true;
+              };
+              # Enable Avahi service for GeoClue2 network-based location detection
+              services.avahi = {
+                enable = true;
+                nssmdns4 = true;
+                nssmdns6 = true;
               };
             };
           };
