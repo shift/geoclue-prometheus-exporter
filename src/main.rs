@@ -146,6 +146,9 @@ fn setup_metrics(bind_address: &str, port: u16) -> Result<()> {
     // Set the "up" metric to indicate the exporter is running
     metrics::gauge!("up").set(1.0);
     
+    // Initialize geoclue metrics with default values so they appear in metrics output
+    metrics::gauge!("geoclue_location_updates_received").set(0.0);
+    
     // Initialize process metrics collection
     // For metrics-process v2.4.0 we need to collect metrics manually
     collect();
