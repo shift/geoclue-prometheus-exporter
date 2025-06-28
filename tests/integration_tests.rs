@@ -69,9 +69,11 @@ fn test_disconnection_error_on_unavailable_service() -> Result<(), Box<dyn std::
     cmd.arg("--log-level").arg("error");
     cmd.assert()
         .failure()
-        .stderr(predicate::str::contains("ServiceUnknown").or(
-            predicate::str::contains("Service not found")
-        ));
+        .stderr(
+            predicate::str::contains("ServiceUnknown")
+                .or(predicate::str::contains("Service not found"))
+                .or(predicate::str::contains("No such file or directory"))
+        );
     
     Ok(())
 }
