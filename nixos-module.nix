@@ -50,7 +50,7 @@ in {
       geoclue2.appConfig."geoclue-prometheus-exporter" = {
         isAllowed = true;
         isSystem = true;
-        users = [ "geoclue-exporter" ];
+        # Don't specify users field to allow all users (default behavior)
       };
     };
 
