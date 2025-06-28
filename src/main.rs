@@ -285,26 +285,39 @@ async fn setup_geoclue_connection(args: &Args) -> Result<GeoClueConnection> {
     })
 }
 
-// Check if an error indicates a DBus disconnection that warrants reconnection
-fn is_disconnection_error(error: &anyhow::Error) -> bool {
+// Check if an error indicates a permanent failure that should not be retried
+fn is_permanent_error(error: &anyhow::Error, has_connected_before: bool) -> bool {
     let error_str = error.to_string().to_lowercase();
-    let is_disconnection = error_str.contains("remote peer disconnected") ||
-    error_str.contains("connection closed") ||
-    error_str.contains("no reply") ||
-    error_str.contains("noreply") ||
-    error_str.contains("disconnected") ||
-    error_str.contains("broken pipe") ||
-    error_str.contains("transport endpoint is not connected") ||
-    error_str.contains("dbus.error.noreply") ||
-    error_str.contains("message recipient disconnected");
     
-    // Temporary debug logging to diagnose VM test issue
-    eprintln!("DEBUG: is_disconnection_error check:");
-    eprintln!("  Original error: {}", error);
-    eprintln!("  Lowercase: {}", error_str);
-    eprintln!("  Result: {}", is_disconnection);
+    // Always permanent errors
+    if error_str.contains("permission denied") ||
+       error_str.contains("access denied") ||
+       error_str.contains("invalid argument") ||
+       error_str.contains("not permitted") {
+        return true;
+    }
     
-    is_disconnection
+    // If we've never connected before, be more conservative - treat more errors as permanent
+    if !has_connected_before {
+        return error_str.contains("no such file or directory") ||
+               error_str.contains("service not found") ||
+               error_str.contains("serviceunknown") ||
+               error_str.contains("service unknown") ||
+               error_str.contains("name not found") ||
+               (error_str.contains("failed to connect") && error_str.contains("dbus"));
+    }
+    
+    // If we've connected before, most errors are retryable (service might restart)
+    // Only treat clearly permanent configuration errors as non-retryable
+    error_str.contains("permission denied") ||
+    error_str.contains("access denied") ||
+    error_str.contains("invalid argument") ||
+    error_str.contains("not permitted")
+}
+
+// Check if an error indicates a DBus disconnection that warrants reconnection
+fn is_disconnection_error(error: &anyhow::Error, has_connected_before: bool) -> bool {
+    !is_permanent_error(error, has_connected_before)
 }
 
 // Function to monitor location updates with proper error handling
@@ -495,6 +508,7 @@ async fn main() -> Result<()> {
     // Main reconnection loop
     let mut retry_count = 0;
     let max_retry_delay = 60; // Maximum delay between retries in seconds
+    let mut has_connected_before = false;
     
     loop {
         // Check if shutdown was requested
@@ -508,6 +522,7 @@ async fn main() -> Result<()> {
             Ok(geoclue_conn) => {
                 log("INFO", "Successfully connected to GeoClue2", &[]);
                 retry_count = 0; // Reset retry count on successful connection
+                has_connected_before = true; // Mark that we've connected successfully
                 
                 // Set up shutdown handler for this connection
                 let shutdown_connection = Arc::new(Connection::system().await?);
@@ -567,7 +582,7 @@ async fn main() -> Result<()> {
                             // Wait for shutdown handler to complete
                             let _ = shutdown_handle.await;
                             break;
-                        } else if is_disconnection_error(&e) {
+                        } else if is_disconnection_error(&e, has_connected_before) {
                             log("WARN", "GeoClue2 connection lost, will attempt to reconnect", &[
                                 ("error", format!("{}", e)),
                                 ("retry_count", retry_count.to_string()),
@@ -588,7 +603,7 @@ async fn main() -> Result<()> {
                     ("retry_count", retry_count.to_string()),
                 ]);
                 
-                if is_disconnection_error(&e) {
+                if is_disconnection_error(&e, has_connected_before) {
                     log("INFO", "Error identified as disconnection, will retry", &[
                         ("error", format!("{}", e)),
                     ]);
@@ -736,35 +751,58 @@ mod tests {
     // Test disconnection error detection
     #[test]
     fn test_is_disconnection_error() {
-        // Test errors that should be detected as disconnection errors
-        let disconnection_errors = vec![
-            "org.freedesktop.DBus.Error.NoReply: Remote peer disconnected",
-            "org.freedesktop.DBus.Error.NoReply: Message recipient disconnected from message bus without replying",
-            "Connection closed by peer",
-            "Transport endpoint is not connected",
-            "Broken pipe (os error 32)",
-            "No reply from remote service",
-            "DBus.Error.NoReply: Connection lost",
-            "Service disconnected unexpectedly",
-        ];
+        // Test errors for initial connection (has_connected_before = false)
+        let error = anyhow::anyhow!("I/O error: No such file or directory");
+        assert!(!is_disconnection_error(&error, false), "Should be permanent on first connect");
         
-        for error_msg in disconnection_errors {
-            let error = anyhow::anyhow!("{}", error_msg);
-            assert!(is_disconnection_error(&error), "Failed to detect: {}", error_msg);
-        }
+        let error = anyhow::anyhow!("Service not found: org.freedesktop.GeoClue2");
+        assert!(!is_disconnection_error(&error, false), "Should be permanent on first connect");
         
-        // Test errors that should NOT be detected as disconnection errors
-        let non_disconnection_errors = vec![
+        // Test errors for reconnection (has_connected_before = true)
+        let error = anyhow::anyhow!("I/O error: No such file or directory");
+        assert!(is_disconnection_error(&error, true), "Should be retryable on reconnect");
+        
+        let error = anyhow::anyhow!("org.freedesktop.DBus.Error.NoReply: Message recipient disconnected from message bus without replying");
+        assert!(is_disconnection_error(&error, true), "Should be retryable on reconnect");
+        
+        // Test permanent errors (always permanent)
+        let error = anyhow::anyhow!("Permission denied");
+        assert!(!is_disconnection_error(&error, false), "Should be permanent");
+        assert!(!is_disconnection_error(&error, true), "Should be permanent");
+    }
+
+    // Test permanent error detection
+    #[test]
+    fn test_is_permanent_error() {
+        // Test errors that should be permanent on first connect
+        let permanent_errors = vec![
             "Permission denied",
+            "Access denied", 
             "Invalid argument",
-            "File not found",
-            "Service not found",
+            "Not permitted",
+            "Service not found: org.freedesktop.GeoClue2",
             "I/O error: No such file or directory",
         ];
         
-        for error_msg in non_disconnection_errors {
+        for error_msg in permanent_errors {
             let error = anyhow::anyhow!("{}", error_msg);
-            assert!(!is_disconnection_error(&error), "False positive for: {}", error_msg);
+            assert!(is_permanent_error(&error, false), "Failed to detect as permanent on first connect: {}", error_msg);
+        }
+        
+        // Test errors that should be retryable on reconnect
+        let retryable_on_reconnect = vec![
+            "I/O error: No such file or directory",
+            "Service not found: org.freedesktop.GeoClue2",
+            "org.freedesktop.DBus.Error.NoReply: Remote peer disconnected",
+        ];
+        
+        for error_msg in retryable_on_reconnect {
+            let error = anyhow::anyhow!("{}", error_msg);
+            if error_msg.contains("Permission") || error_msg.contains("Invalid argument") {
+                assert!(is_permanent_error(&error, true), "Should always be permanent: {}", error_msg);
+            } else {
+                assert!(!is_permanent_error(&error, true), "Should be retryable on reconnect: {}", error_msg);
+            }
         }
     }
 }
