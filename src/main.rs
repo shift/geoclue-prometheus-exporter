@@ -291,6 +291,8 @@ fn is_disconnection_error(error: &anyhow::Error) -> bool {
     error_str.contains("remote peer disconnected") ||
     error_str.contains("connection closed") ||
     error_str.contains("no reply") ||
+    error_str.contains("noreply") ||
+    error_str.contains("disconnected") ||
     error_str.contains("broken pipe") ||
     error_str.contains("transport endpoint is not connected")
 }
@@ -723,10 +725,13 @@ mod tests {
         // Test errors that should be detected as disconnection errors
         let disconnection_errors = vec![
             "org.freedesktop.DBus.Error.NoReply: Remote peer disconnected",
+            "org.freedesktop.DBus.Error.NoReply: Message recipient disconnected from message bus without replying",
             "Connection closed by peer",
             "Transport endpoint is not connected",
             "Broken pipe (os error 32)",
             "No reply from remote service",
+            "DBus.Error.NoReply: Connection lost",
+            "Service disconnected unexpectedly",
         ];
         
         for error_msg in disconnection_errors {
@@ -740,6 +745,7 @@ mod tests {
             "Invalid argument",
             "File not found",
             "Service not found",
+            "I/O error: No such file or directory",
         ];
         
         for error_msg in non_disconnection_errors {
