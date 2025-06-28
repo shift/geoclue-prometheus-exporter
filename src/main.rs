@@ -288,7 +288,7 @@ async fn setup_geoclue_connection(args: &Args) -> Result<GeoClueConnection> {
 // Check if an error indicates a DBus disconnection that warrants reconnection
 fn is_disconnection_error(error: &anyhow::Error) -> bool {
     let error_str = error.to_string().to_lowercase();
-    error_str.contains("remote peer disconnected") ||
+    let is_disconnection = error_str.contains("remote peer disconnected") ||
     error_str.contains("connection closed") ||
     error_str.contains("no reply") ||
     error_str.contains("noreply") ||
@@ -296,7 +296,15 @@ fn is_disconnection_error(error: &anyhow::Error) -> bool {
     error_str.contains("broken pipe") ||
     error_str.contains("transport endpoint is not connected") ||
     error_str.contains("dbus.error.noreply") ||
-    error_str.contains("message recipient disconnected")
+    error_str.contains("message recipient disconnected");
+    
+    // Temporary debug logging to diagnose VM test issue
+    eprintln!("DEBUG: is_disconnection_error check:");
+    eprintln!("  Original error: {}", error);
+    eprintln!("  Lowercase: {}", error_str);
+    eprintln!("  Result: {}", is_disconnection);
+    
+    is_disconnection
 }
 
 // Function to monitor location updates with proper error handling
