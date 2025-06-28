@@ -165,7 +165,17 @@ fn setup_metrics(bind_address: &str, port: u16) -> Result<()> {
     Ok(())
 }
 
-// Helper function to check if a message should be logged based on log level
+/// Helper function to check if a message should be logged based on the configured log level.
+/// 
+/// # Arguments
+/// * `message_level` - The log level of the message to check
+/// 
+/// # Returns
+/// * `true` if the message should be logged, `false` otherwise
+/// 
+/// # Safety
+/// This function uses unsafe code to access the global LOG_LEVEL variable.
+/// This is safe because LOG_LEVEL is set once at startup and never modified again.
 fn should_log(message_level: LogLevel) -> bool {
     // Safety: This is safe because we set LOG_LEVEL once at startup and never modify it again
     unsafe {
@@ -178,7 +188,15 @@ fn should_log(message_level: LogLevel) -> bool {
     }
 }
 
-// Helper function to log in structured format
+/// Helper function to log messages in structured format with timestamp and fields.
+/// 
+/// # Arguments
+/// * `level` - The log level as a string ("DEBUG", "INFO", "WARN", "ERROR")
+/// * `message` - The main log message
+/// * `fields` - Additional key-value pairs to include in the log output
+/// 
+/// # Note
+/// Messages are only output if they meet the configured log level threshold.
 fn log(level: &str, message: &str, fields: &[(&str, String)]) {
     let message_level = match level {
         "DEBUG" => LogLevel::Debug,
@@ -204,7 +222,26 @@ fn log(level: &str, message: &str, fields: &[(&str, String)]) {
     println!("{}", log_str);
 }
 
-// Helper function to set gauge only if the value is valid
+/// Helper function to set a Prometheus gauge metric only if the value is valid.
+/// 
+/// This function validates metric values before setting them, filtering out:
+/// - NaN (Not a Number) values
+/// - Infinite values  
+/// - Out-of-range values for specific metrics (latitude, longitude, heading, etc.)
+/// 
+/// # Arguments
+/// * `metric_name` - The name of the metric to set
+/// * `value` - The numeric value to set
+/// 
+/// # Returns
+/// * `true` if the metric was set successfully, `false` if the value was invalid
+/// 
+/// # Validation Rules
+/// * `latitude`: Must be between -90.0 and 90.0 degrees
+/// * `longitude`: Must be between -180.0 and 180.0 degrees  
+/// * `heading`: Must be between 0.0 and 360.0 degrees
+/// * `accuracy`, `speed`: Must be non-negative
+/// * All metrics: Must be finite (not NaN or infinite)
 fn set_gauge_if_valid(metric_name: &str, value: f64) -> bool {
     // Check for invalid values (NaN, infinity)
     if !value.is_finite() {
@@ -218,7 +255,7 @@ fn set_gauge_if_valid(metric_name: &str, value: f64) -> bool {
     // For latitude and longitude, check reasonable bounds
     match metric_name {
         "latitude" => {
-            if value < -90.0 || value > 90.0 {
+            if !(-90.0..=90.0).contains(&value) {
                 log("DEBUG", &format!("Skipping invalid latitude value {}", value), &[
                     ("metric", metric_name.to_string()), 
                     ("value", value.to_string())
@@ -227,7 +264,7 @@ fn set_gauge_if_valid(metric_name: &str, value: f64) -> bool {
             }
         },
         "longitude" => {
-            if value < -180.0 || value > 180.0 {
+            if !(-180.0..=180.0).contains(&value) {
                 log("DEBUG", &format!("Skipping invalid longitude value {}", value), &[
                     ("metric", metric_name.to_string()), 
                     ("value", value.to_string())
@@ -245,7 +282,7 @@ fn set_gauge_if_valid(metric_name: &str, value: f64) -> bool {
             }
         },
         "heading" => {
-            if value < 0.0 || value > 360.0 {
+            if !(0.0..=360.0).contains(&value) {
                 log("DEBUG", &format!("Skipping invalid heading value {}", value), &[
                     ("metric", metric_name.to_string()), 
                     ("value", value.to_string())
