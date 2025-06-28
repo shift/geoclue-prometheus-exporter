@@ -59,3 +59,19 @@ fn test_help_flag() -> Result<(), Box<dyn std::error::Error>> {
     
     Ok(())
 }
+
+#[test]
+fn test_disconnection_error_on_unavailable_service() -> Result<(), Box<dyn std::error::Error>> {
+    let mut cmd = Command::cargo_bin("geoclue-prometheus-exporter")?;
+    
+    // Test that the application exits when GeoClue2 service is not available
+    // This simulates the typical case where the service would need to handle reconnection
+    cmd.arg("--log-level").arg("error");
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("ServiceUnknown").or(
+            predicate::str::contains("Service not found")
+        ));
+    
+    Ok(())
+}

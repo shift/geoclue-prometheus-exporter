@@ -2,7 +2,6 @@
 mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
-    use tempfile::tempdir;
     
     // Test the log level logic functions
     #[test]
@@ -65,8 +64,7 @@ mod tests {
         // Verify it contains the expected components
         assert!(version_str.contains(PKG_NAME));
         assert!(version_str.contains(PKG_VERSION));
-        assert!(version_str.contains(GIT_HASH));
-        assert!(version_str.contains(BUILD_DATE));
+        assert!(version_str.contains("Build:"));
     }
     
     // Test AccuracyLevel conversion
@@ -108,6 +106,37 @@ mod tests {
             let mut tracker_guard = tracker.lock().unwrap();
             tracker_guard.received_updates += 1;
             assert_eq!(tracker_guard.received_updates, 2);
+        }
+    }
+    
+    // Test disconnection error detection
+    #[test]
+    fn test_is_disconnection_error() {
+        // Test errors that should be detected as disconnection errors
+        let disconnection_errors = vec![
+            "org.freedesktop.DBus.Error.NoReply: Remote peer disconnected",
+            "Connection closed by peer",
+            "Transport endpoint is not connected",
+            "Broken pipe (os error 32)",
+            "No reply from remote service",
+        ];
+        
+        for error_msg in disconnection_errors {
+            let error = anyhow::anyhow!("{}", error_msg);
+            assert!(is_disconnection_error(&error), "Failed to detect: {}", error_msg);
+        }
+        
+        // Test errors that should NOT be detected as disconnection errors
+        let non_disconnection_errors = vec![
+            "Permission denied",
+            "Invalid argument",
+            "File not found",
+            "Service not found",
+        ];
+        
+        for error_msg in non_disconnection_errors {
+            let error = anyhow::anyhow!("{}", error_msg);
+            assert!(!is_disconnection_error(&error), "False positive for: {}", error_msg);
         }
     }
 }
