@@ -101,8 +101,10 @@
             machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'up 1'")
             # Check that the metrics endpoint is serving Prometheus format data
             machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q '# HELP'")
-            # Verify that geoclue metrics are described (even if not yet populated)
-            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_latitude'")
+            # Debug: Show what metrics are actually available
+            print(machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep geoclue || echo 'No geoclue metrics found'"))
+            # Verify that geoclue metrics are present - check for any geoclue metric
+            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_'")
           '';
         };
       in

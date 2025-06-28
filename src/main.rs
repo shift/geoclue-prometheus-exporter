@@ -129,26 +129,28 @@ fn setup_metrics(bind_address: &str, port: u16) -> Result<()> {
 
     // Define metrics
     metrics::describe_gauge!("up", "Indicates if the exporter is operational (1 = up)");
-    metrics::describe_gauge!("geoclue_latitude", "Latitude in degrees (-1 = no data received)");
-    metrics::describe_gauge!("geoclue_longitude", "Longitude in degrees (-1 = no data received)");
-    metrics::describe_gauge!("geoclue_accuracy", "Location accuracy in meters (-1 = no data received)");
-    metrics::describe_gauge!("geoclue_altitude", "Altitude in meters above sea level (-1 = not available)");
-    metrics::describe_gauge!("geoclue_speed", "Speed in meters per second (-1 = no data received)");
-    metrics::describe_gauge!("geoclue_heading", "Heading in degrees from North (-1 = no data received)");
+    metrics::describe_gauge!("geoclue_latitude", "Latitude in degrees (NaN = no data received)");
+    metrics::describe_gauge!("geoclue_longitude", "Longitude in degrees (NaN = no data received)");
+    metrics::describe_gauge!("geoclue_accuracy", "Location accuracy in meters (NaN = no data received)");
+    metrics::describe_gauge!("geoclue_altitude", "Altitude in meters above sea level (NaN = not available)");
+    metrics::describe_gauge!("geoclue_speed", "Speed in meters per second (NaN = no data received)");
+    metrics::describe_gauge!("geoclue_heading", "Heading in degrees from North (NaN = no data received)");
     metrics::describe_gauge!("geoclue_location_updates_received", "Number of location updates received");
+    metrics::describe_gauge!("geoclue_data_available", "Indicates if location data is available (1 = available, 0 = not available)");
     
     // Set the "up" metric to indicate the exporter is running
     metrics::gauge!("up").set(1.0);
     
-    // Initialize all geoclue metrics with sentinel values so they appear in metrics output immediately
-    // Use -1 to indicate that no location data has been received yet (finite value that shows in Prometheus)
-    metrics::gauge!("geoclue_latitude").set(-1.0);
-    metrics::gauge!("geoclue_longitude").set(-1.0);
-    metrics::gauge!("geoclue_accuracy").set(-1.0);
-    metrics::gauge!("geoclue_altitude").set(-1.0); // -1 indicates not available as per description
-    metrics::gauge!("geoclue_speed").set(-1.0);
-    metrics::gauge!("geoclue_heading").set(-1.0);
+    // Initialize all geoclue metrics with finite default values so they appear in metrics output immediately
+    // Use 0.0 for coordinates and NaN indicator will be handled separately
+    metrics::gauge!("geoclue_latitude").set(0.0);
+    metrics::gauge!("geoclue_longitude").set(0.0);
+    metrics::gauge!("geoclue_accuracy").set(0.0);
+    metrics::gauge!("geoclue_altitude").set(0.0);
+    metrics::gauge!("geoclue_speed").set(0.0);
+    metrics::gauge!("geoclue_heading").set(0.0);
     metrics::gauge!("geoclue_location_updates_received").set(0.0);
+    metrics::gauge!("geoclue_data_available").set(0.0); // 0 = no data available yet
     
     // Initialize process metrics collection
     // For metrics-process v2.4.0 we need to collect metrics manually
@@ -198,8 +200,8 @@ fn log(level: &str, message: &str, fields: &[(&str, String)]) {
 
 // Helper function to set gauge only if the value is valid
 fn set_gauge_if_valid(metric_name: &str, value: f64) -> bool {
-    // Skip setting the metric if it's a sentinel value (-1 or extreme negative value)
-    if value == -1.0 || value <= -1.7e308 {
+    // Check for invalid values (NaN, infinity)
+    if !value.is_finite() {
         log("DEBUG", &format!("Skipping invalid metric {}", metric_name), &[
             ("metric", metric_name.to_string()), 
             ("value", value.to_string())
@@ -207,9 +209,53 @@ fn set_gauge_if_valid(metric_name: &str, value: f64) -> bool {
         return false;
     }
     
+    // For latitude and longitude, check reasonable bounds
+    match metric_name {
+        "latitude" => {
+            if value < -90.0 || value > 90.0 {
+                log("DEBUG", &format!("Skipping invalid latitude value {}", value), &[
+                    ("metric", metric_name.to_string()), 
+                    ("value", value.to_string())
+                ]);
+                return false;
+            }
+        },
+        "longitude" => {
+            if value < -180.0 || value > 180.0 {
+                log("DEBUG", &format!("Skipping invalid longitude value {}", value), &[
+                    ("metric", metric_name.to_string()), 
+                    ("value", value.to_string())
+                ]);
+                return false;
+            }
+        },
+        "accuracy" | "speed" => {
+            if value < 0.0 {
+                log("DEBUG", &format!("Skipping negative {} value {}", metric_name, value), &[
+                    ("metric", metric_name.to_string()), 
+                    ("value", value.to_string())
+                ]);
+                return false;
+            }
+        },
+        "heading" => {
+            if value < 0.0 || value > 360.0 {
+                log("DEBUG", &format!("Skipping invalid heading value {}", value), &[
+                    ("metric", metric_name.to_string()), 
+                    ("value", value.to_string())
+                ]);
+                return false;
+            }
+        },
+        _ => {} // No specific validation for other metrics
+    }
+    
     // Set the gauge with the appropriate name - use static string literals for metrics
     match metric_name {
-        "latitude" => metrics::gauge!("geoclue_latitude").set(value),
+        "latitude" => {
+            metrics::gauge!("geoclue_latitude").set(value);
+            metrics::gauge!("geoclue_data_available").set(1.0); // Mark data as available
+        },
         "longitude" => metrics::gauge!("geoclue_longitude").set(value),
         "accuracy" => metrics::gauge!("geoclue_accuracy").set(value),
         "altitude" => metrics::gauge!("geoclue_altitude").set(value),
@@ -545,8 +591,13 @@ mod tests {
         assert!(set_gauge_if_valid("heading", 270.0));
         
         // Test with invalid values (should return false)
-        assert!(!set_gauge_if_valid("latitude", -1.0));
-        assert!(!set_gauge_if_valid("longitude", -1.7e308));
+        assert!(!set_gauge_if_valid("latitude", 91.0)); // Out of range
+        assert!(!set_gauge_if_valid("longitude", 181.0)); // Out of range
+        assert!(!set_gauge_if_valid("accuracy", -1.0)); // Negative
+        assert!(!set_gauge_if_valid("speed", -1.0)); // Negative
+        assert!(!set_gauge_if_valid("heading", 361.0)); // Out of range
+        assert!(!set_gauge_if_valid("latitude", f64::NAN));
+        assert!(!set_gauge_if_valid("longitude", f64::INFINITY));
         
         // Test with unknown metric name (should return false)
         assert!(!set_gauge_if_valid("unknown_metric", 123.0));
@@ -666,18 +717,26 @@ mod tests {
         // Test boundary values
         assert!(set_gauge_if_valid("latitude", 0.0));
         assert!(set_gauge_if_valid("longitude", 0.0));
-        assert!(!set_gauge_if_valid("latitude", -1.0));
-        assert!(!set_gauge_if_valid("longitude", -1.7e308));
+        assert!(set_gauge_if_valid("latitude", 90.0)); // Valid boundary
+        assert!(set_gauge_if_valid("latitude", -90.0)); // Valid boundary
+        assert!(!set_gauge_if_valid("latitude", -91.0)); // Invalid boundary
+        assert!(set_gauge_if_valid("longitude", 180.0)); // Valid boundary
+        assert!(set_gauge_if_valid("longitude", -180.0)); // Valid boundary
+        assert!(!set_gauge_if_valid("longitude", -181.0)); // Invalid boundary
         
         // Test extreme values that should be valid
         assert!(set_gauge_if_valid("accuracy", 1000.0));
         assert!(!set_gauge_if_valid("speed", f64::NEG_INFINITY));
         
-        // Test NaN values - NaN comparisons return false, so it will pass the check and return true
-        assert!(set_gauge_if_valid("altitude", f64::NAN));
+        // Test NaN and infinity values - should be rejected
+        assert!(!set_gauge_if_valid("altitude", f64::NAN));
+        assert!(!set_gauge_if_valid("speed", f64::INFINITY));
         
-        // Test positive infinity - the function checks value <= -1.7e308, so +inf should be valid
-        assert!(set_gauge_if_valid("heading", f64::INFINITY));
+        // Test heading boundaries
+        assert!(set_gauge_if_valid("heading", 0.0));
+        assert!(set_gauge_if_valid("heading", 360.0));
+        assert!(!set_gauge_if_valid("heading", -1.0));
+        assert!(!set_gauge_if_valid("heading", 361.0));
     }
 
     // Test AccuracyLevel enum values
