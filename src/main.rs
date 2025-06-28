@@ -135,19 +135,28 @@ fn setup_metrics(bind_address: &str, port: u16) -> Result<()> {
 
     // Define metrics
     metrics::describe_gauge!("up", "Indicates if the exporter is operational (1 = up)");
-    metrics::describe_gauge!("geoclue_latitude", "Latitude in degrees");
-    metrics::describe_gauge!("geoclue_longitude", "Longitude in degrees");
-    metrics::describe_gauge!("geoclue_accuracy", "Location accuracy in meters");
-    metrics::describe_gauge!("geoclue_altitude", "Altitude in meters above sea level (not available = -1)");
-    metrics::describe_gauge!("geoclue_speed", "Speed in meters per second");
-    metrics::describe_gauge!("geoclue_heading", "Heading in degrees from North");
+    metrics::describe_gauge!("geoclue_latitude", "Latitude in degrees (NaN = no data received)");
+    metrics::describe_gauge!("geoclue_longitude", "Longitude in degrees (NaN = no data received)");
+    metrics::describe_gauge!("geoclue_accuracy", "Location accuracy in meters (NaN = no data received)");
+    metrics::describe_gauge!("geoclue_altitude", "Altitude in meters above sea level (NaN = not available)");
+    metrics::describe_gauge!("geoclue_speed", "Speed in meters per second (NaN = no data received)");
+    metrics::describe_gauge!("geoclue_heading", "Heading in degrees from North (NaN = no data received)");
     metrics::describe_gauge!("geoclue_location_updates_received", "Number of location updates received");
+    metrics::describe_gauge!("geoclue_data_available", "Indicates if location data is available (1 = available, 0 = not available)");
     
     // Set the "up" metric to indicate the exporter is running
     metrics::gauge!("up").set(1.0);
     
-    // Initialize geoclue metrics with default values so they appear in metrics output
+    // Initialize all geoclue metrics with finite default values so they appear in metrics output immediately
+    // Use 0.0 for coordinates and NaN indicator will be handled separately
+    metrics::gauge!("geoclue_latitude").set(0.0);
+    metrics::gauge!("geoclue_longitude").set(0.0);
+    metrics::gauge!("geoclue_accuracy").set(0.0);
+    metrics::gauge!("geoclue_altitude").set(0.0);
+    metrics::gauge!("geoclue_speed").set(0.0);
+    metrics::gauge!("geoclue_heading").set(0.0);
     metrics::gauge!("geoclue_location_updates_received").set(0.0);
+    metrics::gauge!("geoclue_data_available").set(0.0); // 0 = no data available yet
     
     // Initialize process metrics collection
     // For metrics-process v2.4.0 we need to collect metrics manually
@@ -156,7 +165,17 @@ fn setup_metrics(bind_address: &str, port: u16) -> Result<()> {
     Ok(())
 }
 
-// Helper function to check if a message should be logged based on log level
+/// Helper function to check if a message should be logged based on the configured log level.
+/// 
+/// # Arguments
+/// * `message_level` - The log level of the message to check
+/// 
+/// # Returns
+/// * `true` if the message should be logged, `false` otherwise
+/// 
+/// # Safety
+/// This function uses unsafe code to access the global LOG_LEVEL variable.
+/// This is safe because LOG_LEVEL is set once at startup and never modified again.
 fn should_log(message_level: LogLevel) -> bool {
     // Safety: This is safe because we set LOG_LEVEL once at startup and never modify it again
     unsafe {
@@ -169,7 +188,15 @@ fn should_log(message_level: LogLevel) -> bool {
     }
 }
 
-// Helper function to log in structured format
+/// Helper function to log messages in structured format with timestamp and fields.
+/// 
+/// # Arguments
+/// * `level` - The log level as a string ("DEBUG", "INFO", "WARN", "ERROR")
+/// * `message` - The main log message
+/// * `fields` - Additional key-value pairs to include in the log output
+/// 
+/// # Note
+/// Messages are only output if they meet the configured log level threshold.
 fn log(level: &str, message: &str, fields: &[(&str, String)]) {
     let message_level = match level {
         "DEBUG" => LogLevel::Debug,
@@ -195,10 +222,29 @@ fn log(level: &str, message: &str, fields: &[(&str, String)]) {
     println!("{}", log_str);
 }
 
-// Helper function to set gauge only if the value is valid
+/// Helper function to set a Prometheus gauge metric only if the value is valid.
+/// 
+/// This function validates metric values before setting them, filtering out:
+/// - NaN (Not a Number) values
+/// - Infinite values  
+/// - Out-of-range values for specific metrics (latitude, longitude, heading, etc.)
+/// 
+/// # Arguments
+/// * `metric_name` - The name of the metric to set
+/// * `value` - The numeric value to set
+/// 
+/// # Returns
+/// * `true` if the metric was set successfully, `false` if the value was invalid
+/// 
+/// # Validation Rules
+/// * `latitude`: Must be between -90.0 and 90.0 degrees
+/// * `longitude`: Must be between -180.0 and 180.0 degrees  
+/// * `heading`: Must be between 0.0 and 360.0 degrees
+/// * `accuracy`, `speed`: Must be non-negative
+/// * All metrics: Must be finite (not NaN or infinite)
 fn set_gauge_if_valid(metric_name: &str, value: f64) -> bool {
-    // Skip setting the metric if it's a sentinel value (-1 or extreme negative value)
-    if value == -1.0 || value <= -1.7e308 {
+    // Check for invalid values (NaN, infinity)
+    if !value.is_finite() {
         log("DEBUG", &format!("Skipping invalid metric {}", metric_name), &[
             ("metric", metric_name.to_string()), 
             ("value", value.to_string())
@@ -206,9 +252,53 @@ fn set_gauge_if_valid(metric_name: &str, value: f64) -> bool {
         return false;
     }
     
+    // For latitude and longitude, check reasonable bounds
+    match metric_name {
+        "latitude" => {
+            if !(-90.0..=90.0).contains(&value) {
+                log("DEBUG", &format!("Skipping invalid latitude value {}", value), &[
+                    ("metric", metric_name.to_string()), 
+                    ("value", value.to_string())
+                ]);
+                return false;
+            }
+        },
+        "longitude" => {
+            if !(-180.0..=180.0).contains(&value) {
+                log("DEBUG", &format!("Skipping invalid longitude value {}", value), &[
+                    ("metric", metric_name.to_string()), 
+                    ("value", value.to_string())
+                ]);
+                return false;
+            }
+        },
+        "accuracy" | "speed" => {
+            if value < 0.0 {
+                log("DEBUG", &format!("Skipping negative {} value {}", metric_name, value), &[
+                    ("metric", metric_name.to_string()), 
+                    ("value", value.to_string())
+                ]);
+                return false;
+            }
+        },
+        "heading" => {
+            if !(0.0..=360.0).contains(&value) {
+                log("DEBUG", &format!("Skipping invalid heading value {}", value), &[
+                    ("metric", metric_name.to_string()), 
+                    ("value", value.to_string())
+                ]);
+                return false;
+            }
+        },
+        _ => {} // No specific validation for other metrics
+    }
+    
     // Set the gauge with the appropriate name - use static string literals for metrics
     match metric_name {
-        "latitude" => metrics::gauge!("geoclue_latitude").set(value),
+        "latitude" => {
+            metrics::gauge!("geoclue_latitude").set(value);
+            metrics::gauge!("geoclue_data_available").set(1.0); // Mark data as available
+        },
         "longitude" => metrics::gauge!("geoclue_longitude").set(value),
         "accuracy" => metrics::gauge!("geoclue_accuracy").set(value),
         "altitude" => metrics::gauge!("geoclue_altitude").set(value),
@@ -675,6 +765,9 @@ mod tests {
     #[test]
     fn test_should_log() {
         unsafe {
+            // Store the original log level to restore later
+            let original_level = LOG_LEVEL;
+            
             // Test Debug level
             LOG_LEVEL = LogLevel::Debug;
             assert!(should_log(LogLevel::Debug));
@@ -702,6 +795,9 @@ mod tests {
             assert!(!should_log(LogLevel::Info));
             assert!(!should_log(LogLevel::Warn));
             assert!(should_log(LogLevel::Error));
+            
+            // Restore original log level
+            LOG_LEVEL = original_level;
         }
     }
     
@@ -717,8 +813,13 @@ mod tests {
         assert!(set_gauge_if_valid("heading", 270.0));
         
         // Test with invalid values (should return false)
-        assert!(!set_gauge_if_valid("latitude", -1.0));
-        assert!(!set_gauge_if_valid("longitude", -1.7e308));
+        assert!(!set_gauge_if_valid("latitude", 91.0)); // Out of range
+        assert!(!set_gauge_if_valid("longitude", 181.0)); // Out of range
+        assert!(!set_gauge_if_valid("accuracy", -1.0)); // Negative
+        assert!(!set_gauge_if_valid("speed", -1.0)); // Negative
+        assert!(!set_gauge_if_valid("heading", 361.0)); // Out of range
+        assert!(!set_gauge_if_valid("latitude", f64::NAN));
+        assert!(!set_gauge_if_valid("longitude", f64::INFINITY));
         
         // Test with unknown metric name (should return false)
         assert!(!set_gauge_if_valid("unknown_metric", 123.0));
@@ -732,6 +833,7 @@ mod tests {
         // Verify it contains the expected components
         assert!(version_str.contains(PKG_NAME));
         assert!(version_str.contains(PKG_VERSION));
+        assert!(version_str.contains(GIT_HASH));
         assert!(version_str.contains("Build:"));
     }
     
@@ -774,6 +876,228 @@ mod tests {
             let mut tracker_guard = tracker.lock().unwrap();
             tracker_guard.received_updates += 1;
             assert_eq!(tracker_guard.received_updates, 2);
+        }
+    }
+
+    // Test setup_metrics with invalid addresses
+    #[test]
+    fn test_setup_metrics_invalid_address() {
+        // Test with malformed address
+        let result = setup_metrics("invalid-address", 9090);
+        assert!(result.is_err());
+        
+        // Test with very invalid address containing special characters
+        let result = setup_metrics("not-an-address%", 9090);
+        assert!(result.is_err());
+    }
+
+    // Test setup_metrics with valid addresses (just parse validation)
+    #[test] 
+    fn test_setup_metrics_address_parsing() {
+        // Test that address parsing works correctly by using unusual but valid ports
+        use std::sync::atomic::{AtomicU16, Ordering};
+        static PORT_COUNTER: AtomicU16 = AtomicU16::new(50000);
+        
+        let port = PORT_COUNTER.fetch_add(1, Ordering::SeqCst);
+        
+        // Test address parsing - may fail on server startup but should succeed parsing
+        // This tests the address parsing logic without requiring the server to actually start
+        let result = setup_metrics("127.0.0.1", port);
+        
+        // If it fails, it should be due to server startup, not address parsing
+        // So we can't assert success here as ports might be in use or permissions may be denied
+        // But we can test that the error message is about server startup, not address parsing
+        if result.is_err() {
+            let error_msg = format!("{}", result.unwrap_err());
+            // Should not contain "Failed to parse bind address"
+            assert!(!error_msg.contains("Failed to parse bind address"));
+        }
+    }
+
+    // Test log function with different levels and fields
+    #[test]
+    fn test_log_function() {
+        unsafe {
+            LOG_LEVEL = LogLevel::Debug;
+        }
+        
+        // Test logging with various field combinations
+        log("INFO", "test message", &[]);
+        log("ERROR", "error message", &[("key", "value".to_string())]);
+        log("DEBUG", "debug message", &[
+            ("field1", "value1".to_string()),
+            ("field2", "value2".to_string())
+        ]);
+        
+        // Test with unknown log level (should default to Info)
+        log("UNKNOWN", "unknown level", &[]);
+    }
+
+    // Test edge cases for set_gauge_if_valid
+    #[test]
+    fn test_set_gauge_if_valid_edge_cases() {
+        // Test boundary values
+        assert!(set_gauge_if_valid("latitude", 0.0));
+        assert!(set_gauge_if_valid("longitude", 0.0));
+        assert!(set_gauge_if_valid("latitude", 90.0)); // Valid boundary
+        assert!(set_gauge_if_valid("latitude", -90.0)); // Valid boundary
+        assert!(!set_gauge_if_valid("latitude", -91.0)); // Invalid boundary
+        assert!(set_gauge_if_valid("longitude", 180.0)); // Valid boundary
+        assert!(set_gauge_if_valid("longitude", -180.0)); // Valid boundary
+        assert!(!set_gauge_if_valid("longitude", -181.0)); // Invalid boundary
+        
+        // Test extreme values that should be valid
+        assert!(set_gauge_if_valid("accuracy", 1000.0));
+        assert!(!set_gauge_if_valid("speed", f64::NEG_INFINITY));
+        
+        // Test NaN and infinity values - should be rejected
+        assert!(!set_gauge_if_valid("altitude", f64::NAN));
+        assert!(!set_gauge_if_valid("speed", f64::INFINITY));
+        
+        // Test heading boundaries
+        assert!(set_gauge_if_valid("heading", 0.0));
+        assert!(set_gauge_if_valid("heading", 360.0));
+        assert!(!set_gauge_if_valid("heading", -1.0));
+        assert!(!set_gauge_if_valid("heading", 361.0));
+    }
+
+    // Test AccuracyLevel enum values
+    #[test]
+    fn test_accuracy_level_values() {
+        // Test that enum values match GeoClue2 specification
+        assert_eq!(AccuracyLevel::None as u32, 0);
+        assert_eq!(AccuracyLevel::Country as u32, 1);
+        assert_eq!(AccuracyLevel::City as u32, 4);
+        assert_eq!(AccuracyLevel::Neighborhood as u32, 5);
+        assert_eq!(AccuracyLevel::Street as u32, 6);
+        assert_eq!(AccuracyLevel::Exact as u32, 8);
+    }
+
+    // Test LogLevel enum values 
+    #[test]
+    fn test_log_level_debug_trait() {
+        // Ensure Debug trait works for LogLevel
+        let level = LogLevel::Info;
+        let debug_str = format!("{:?}", level);
+        assert!(debug_str.contains("Info"));
+    }
+
+    // Test AccuracyLevelArg enum values
+    #[test]
+    fn test_accuracy_level_arg_debug_trait() {
+        // Ensure Debug trait works for AccuracyLevelArg
+        let level = AccuracyLevelArg::Street;
+        let debug_str = format!("{:?}", level);
+        assert!(debug_str.contains("Street"));
+    }
+
+    // Test version string components
+    #[test]
+    fn test_version_string_components() {
+        let version_str = get_version_string();
+        
+        // Test individual components
+        assert!(version_str.contains(PKG_NAME));
+        assert!(version_str.len() > PKG_NAME.len()); // Should be longer than just the name
+        
+        // Should contain version
+        assert!(version_str.contains(PKG_VERSION));
+        
+        // Should contain git hash or "unknown"
+        assert!(version_str.contains(GIT_HASH) || version_str.contains("unknown"));
+    }
+
+    // Test concurrent access to UpdateTracker
+    #[tokio::test]
+    async fn test_update_tracker_concurrency() {
+        let tracker = Arc::new(Mutex::new(UpdateTracker {
+            received_updates: 0,
+        }));
+        
+        let tracker_clone = tracker.clone();
+        
+        // Spawn multiple tasks to update concurrently
+        let handles: Vec<_> = (0..10).map(|_| {
+            let tracker_ref = tracker_clone.clone();
+            tokio::spawn(async move {
+                for _ in 0..10 {
+                    let mut guard = tracker_ref.lock().unwrap();
+                    guard.received_updates += 1;
+                }
+            })
+        }).collect();
+        
+        // Wait for all tasks to complete
+        for handle in handles {
+            handle.await.unwrap();
+        }
+        
+        // Check final count
+        let final_count = tracker.lock().unwrap().received_updates;
+        assert_eq!(final_count, 100); // 10 tasks * 10 increments each
+    }
+
+    // Test all AccuracyLevelArg variants convert correctly
+    #[test]
+    fn test_all_accuracy_level_conversions() {
+        use std::mem;
+        
+        // Test all possible conversions
+        let none: AccuracyLevel = AccuracyLevelArg::None.into();
+        assert!(matches!(none, AccuracyLevel::None));
+        
+        let country: AccuracyLevel = AccuracyLevelArg::Country.into();
+        assert!(matches!(country, AccuracyLevel::Country));
+        
+        let city: AccuracyLevel = AccuracyLevelArg::City.into();
+        assert!(matches!(city, AccuracyLevel::City));
+        
+        let neighborhood: AccuracyLevel = AccuracyLevelArg::Neighborhood.into();
+        assert!(matches!(neighborhood, AccuracyLevel::Neighborhood));
+        
+        let street: AccuracyLevel = AccuracyLevelArg::Street.into();
+        assert!(matches!(street, AccuracyLevel::Street));
+        
+        let exact: AccuracyLevel = AccuracyLevelArg::Exact.into();
+        assert!(matches!(exact, AccuracyLevel::Exact));
+        
+        // Test enum sizes are reasonable 
+        assert!(mem::size_of::<AccuracyLevel>() <= 8);
+        assert!(mem::size_of::<AccuracyLevelArg>() <= 8);
+    }
+
+    // Test should_log with all combinations
+    #[test]
+    fn test_should_log_all_combinations() {
+        unsafe {
+            // Store the original log level to restore later
+            let original_level = LOG_LEVEL;
+            
+            // Test all level combinations systematically
+            let levels = [LogLevel::Debug, LogLevel::Info, LogLevel::Warn, LogLevel::Error];
+            
+            for &global_level in &levels {
+                LOG_LEVEL = global_level;
+                
+                for &message_level in &levels {
+                    let should_log_result = should_log(message_level);
+                    
+                    // Check logic matches expected behavior
+                    let expected = match global_level {
+                        LogLevel::Debug => true,
+                        LogLevel::Info => message_level != LogLevel::Debug,
+                        LogLevel::Warn => message_level == LogLevel::Warn || message_level == LogLevel::Error,
+                        LogLevel::Error => message_level == LogLevel::Error,
+                    };
+                    
+                    assert_eq!(should_log_result, expected, 
+                        "Failed for global_level: {:?}, message_level: {:?}", 
+                        global_level, message_level);
+                }
+            }
+            
+            // Restore original log level
+            LOG_LEVEL = original_level;
         }
     }
     

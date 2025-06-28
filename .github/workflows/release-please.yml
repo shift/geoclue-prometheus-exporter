@@ -1,0 +1,55 @@
+name: Release Please
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    outputs:
+      releases_created: ${{ steps.release.outputs.releases_created }}
+      tag_name: ${{ steps.release.outputs.tag_name }}
+    steps:
+      - uses: googleapis/release-please-action@v4
+        id: release
+        with:
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json
+
+  # Build and test on successful release
+  build-and-test:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.releases_created }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        
+      - name: Enable Nix Flakes
+        run: |
+          echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
+          
+      - name: Setup Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@main
+        
+      - name: Run all checks via nix flake check
+        run: nix flake check --verbose
+        
+      - name: Build release binary
+        run: nix build .#default
+        
+      - name: Upload release assets
+        if: ${{ needs.release-please.outputs.releases_created }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Upload the built binary as a release asset
+          gh release upload ${{ needs.release-please.outputs.tag_name }} ./result/bin/geoclue-prometheus-exporter
