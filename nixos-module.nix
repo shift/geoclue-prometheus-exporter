@@ -33,7 +33,6 @@ in {
     };
   };
 
-  # A single config block that is applied if the service is enabled
   config = mkIf cfg.enable {
     # Group all services-related config together to avoid multiple definitions
     services = {
@@ -44,15 +43,14 @@ in {
       };
     };
 
-    systemd.user.services = {
+    systemd.services = {
       geoclue-prometheus-exporter = {
         description = "Geoclue to Prometheus Exporter";
-	wantedBy = [ "default.target" ];
+        wantedBy = [ "multi-user.target" ];
         wants = [ "network-online.target" ];
         after = [ "network-online.target" ];
-        unitConfig.ConditionUser = "!@system";
         serviceConfig = {
-	  Type = "exec";
+          Type = "exec";
           ExecStart = "${package}/bin/geoclue-prometheus-exporter --bind-address ${cfg.bind} --metrics-port ${toString cfg.port}";
           Restart = "on-failure";
           RestartSec = "5s";

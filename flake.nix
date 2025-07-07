@@ -112,17 +112,51 @@
                 nssmdns4 = true;
                 nssmdns6 = true;
               };
+              environment.etc."geoclue/geoclue.conf".text = ''
+                [core]
+                allowed-for-system=all
+
+                [static-source]
+                enable=true
+                path=/var/lib/geoclue-static.conf
+              '';
+
+              systemd.tmpfiles.rules = [
+                "f /var/lib/geoclue-static.conf 0644 root root - -"
+              ];
+              environment.systemPackages = [ pkgs.curl ];
             };
           };
           testScript = ''
             start_all()
+
+            # Wait for both services to be ready.
+            machine.wait_for_unit("geoclue.service")
             machine.wait_for_unit("geoclue-prometheus-exporter.service")
-            # Check that the service is running
-            machine.succeed("systemctl is-active geoclue-prometheus-exporter.service")
-            # Wait for the metrics endpoint to be available
-            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_'")
-            # Check that some metrics are present
-            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q 'up 1'")
+            machine.wait_for_open_port(9090)
+
+            # --- LOCATION 1: Berlin ---
+            machine.log("Simulating location: Berlin")
+            machine.succeed(
+              "echo 'latitude=52.5200;longitude=13.4050;accuracy=10.0' > /var/lib/geoclue-static.conf"
+            )
+
+            # Give geoclue and the exporter a moment to process the update.
+            machine.sleep(5)
+
+            # Check if the exporter reports Berlins latitude.
+            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep 'geoclue_latitude 52.52'")
+
+            # --- LOCATION 2: Munich (Simulating Movement) ---
+            machine.log("Simulating movement to Munich")
+            machine.succeed(
+              "echo 'latitude=48.1351;longitude=11.5820;accuracy=10.0' > /var/lib/geoclue-static.conf"
+            )
+            machine.sleep(5)
+
+            # Verify the exporter has updated to Munichs latitude.
+            machine.log("Verifying exporter has updated location")
+            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep 'geoclue_latitude 48.1351'")
           '';
         };
       in
@@ -196,12 +230,6 @@
               };
             };
           };
-          testScript = ''
-            start_all()
-            machine.wait_for_unit("geoclue-prometheus-exporter.service")
-            machine.succeed("systemctl is-active geoclue-prometheus-exporter.service")
-            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_'")
-          '';
         };
       };
     };
