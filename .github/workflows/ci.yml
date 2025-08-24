@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@main
+        
+      - name: Enable Nix Flakes
+        run: |
+          echo "experimental-features = nix-command flakes" | sudo tee -a /etc/nix/nix.conf
+          
+      - name: Setup Nix cache  
+        uses: DeterminateSystems/magic-nix-cache-action@main
+        
+      - name: Run all checks via nix flake check
+        run: nix flake check --verbose --show-trace
+        
+      - name: Build package
+        run: nix build .#default --verbose

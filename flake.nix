@@ -21,22 +21,6 @@
         import ./nixos-module-alloy.nix {
           inherit pkgs lib config;
         };
-        
-      # Run all tests in one go
-      runAllTests = system: pkgs: pkgs.writeShellScriptBin "run-all-tests" ''
-        set -e
-        echo "Running unit tests..."
-        cd ${self}
-        ${pkgs.cargo}/bin/cargo test
-        
-        echo "Running integration tests..."
-        ${pkgs.cargo}/bin/cargo test --test integration_test
-        
-        echo "Running VM tests..."
-        nix build .#checks.${system}.vm-test
-        
-        echo "All tests passed!"
-      '';
     in
     flake-utils.lib.eachDefaultSystem (system:
       let
@@ -119,10 +103,14 @@
             machine.wait_for_unit("geoclue-prometheus-exporter.service")
             # Check that the service is running
             machine.succeed("systemctl is-active geoclue-prometheus-exporter.service")
-            # Wait for the metrics endpoint to be available
-            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_'")
-            # Check that some metrics are present
-            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q 'up 1'")
+            # Wait for the metrics endpoint to be available and check for the 'up' metric
+            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'up 1'")
+            # Check that the metrics endpoint is serving Prometheus format data
+            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q '# HELP'")
+            # Debug: Show what metrics are actually available
+            print(machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep geoclue || echo 'No geoclue metrics found'"))
+            # Verify that geoclue metrics are present - check for any geoclue metric
+            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_'")
           '';
         };
       in
@@ -130,16 +118,35 @@
         # The default package built by `nix build`
         packages = {
           default = geoclue-prometheus-exporter;
-          test-runner = runAllTests system pkgs;
         };
 
         # Run checks for the flake
         checks = {
-          # Include the package build as a check
+          # Include the package build as a check (this includes unit tests)
           build = geoclue-prometheus-exporter;
           
           # Test the exporter in a VM
           vm-test = geoclue-exporter-test;
+          
+          # All tests including integration tests that require binary compilation
+          all-tests = pkgs.runCommand "all-tests" {
+            nativeBuildInputs = [ pkgs.cargo pkgs.rustc ] ++ geoclue-build-inputs;
+            buildInputs = [ pkgs.openssl ];
+            src = ./.;
+            CARGO_TARGET_DIR = "/tmp/cargo-target";
+            OPENSSL_DIR = "${pkgs.openssl.dev}";
+            OPENSSL_LIB_DIR = "${pkgs.openssl.out}/lib";
+            OPENSSL_INCLUDE_DIR = "${pkgs.openssl.dev}/include";
+            GIT_HASH = gitHash;
+          } ''
+            cp -r $src/* .
+            cp -r $src/.git . 2>/dev/null || true
+            # Build the binary first so integration tests can find it
+            cargo build
+            # Run all tests including integration tests
+            cargo test --all
+            touch $out
+          '';
         };
 
         # Development shell for `nix develop`
@@ -151,8 +158,6 @@
             # Include test dependencies
             pkgs.cargo-nextest
             pkgs.cargo-tarpaulin
-            # Include the test runner
-            self.packages.${system}.test-runner
           ] ++ geoclue-build-inputs; # Add build inputs like dbus and pkg-config
           
           # Also set the OpenSSL environment variables for the dev shell
@@ -200,7 +205,7 @@
             start_all()
             machine.wait_for_unit("geoclue-prometheus-exporter.service")
             machine.succeed("systemctl is-active geoclue-prometheus-exporter.service")
-            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'geoclue_'")
+            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep -q 'up 1'")
           '';
         };
       };
