@@ -31,15 +31,36 @@ in {
       default = 9090;
       description = "Port to bind the metrics server to.";
     };
+    logLevel = mkOption {
+      type = types.enum [ "debug" "info" "warn" "error" ];
+      default = "info";
+      description = "The log level for the exporter.";
+    };
   };
 
   config = mkIf cfg.enable {
+    security.polkit.extraConfig = ''
+      polkit.addRule(function(action, subject) {
+        if (action.id == "org.freedesktop.location.geoclue" &&
+            subject.user == "geoclue-prometheus-exporter") {
+          return polkit.Result.YES;
+        }
+      });
+    '';
+
+    users.users.geoclue-prometheus-exporter = {
+      isSystemUser = true;
+      group = "geoclue-prometheus-exporter";
+    };
+
+    users.groups.geoclue-prometheus-exporter = {};
+
     # Group all services-related config together to avoid multiple definitions
     services = {
       # Main geoclue service configuration
       geoclue2.appConfig."geoclue-prometheus-exporter" = {
         isAllowed = true;
-        isSystem = false;
+        isSystem = true;
       };
     };
 
@@ -51,9 +72,11 @@ in {
         after = [ "network-online.target" ];
         serviceConfig = {
           Type = "exec";
-          ExecStart = "${package}/bin/geoclue-prometheus-exporter --bind-address ${cfg.bind} --metrics-port ${toString cfg.port}";
+          ExecStart = "${package}/bin/geoclue-prometheus-exporter --bind-address ${cfg.bind} --metrics-port ${toString cfg.port} --log-level ${cfg.logLevel}";
           Restart = "on-failure";
           RestartSec = "5s";
+          User = "geoclue-prometheus-exporter";
+          Group = "geoclue-prometheus-exporter";
         };
       };
     };

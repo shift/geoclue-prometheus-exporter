@@ -45,6 +45,15 @@
           inherit system overlays;
         };
 
+        # Define the static location file content
+        locationFile = pkgs.writeText "geolocation" ''
+          # Example static location file for a machine inside Statue of Liberty torch
+          40.6893129   # latitude
+          -74.0445531  # longitude
+          96           # altitude
+          1.83         # accuracy radius (the diameter of the torch is 12 feet)
+        '';
+
         # Expanded build inputs with proper OpenSSL
         geoclue-build-inputs = [ 
           pkgs.pkg-config 
@@ -94,17 +103,26 @@
           inherit pkgs;
           nodes = {
             machine = { pkgs, ... }: {
-              imports = [ self.nixosModules.default ];
+              imports = [
+                self.nixosModules.default
+                ./nix/test-common.nix
+              ];
               services.geoclue-prometheus-exporter = {
                 enable = true;
                 bind = "127.0.0.1";
                 port = 9090;
                 openFirewall = true;
+                logLevel = "debug";
               };
               # Enable geoclue service for testing
               services.geoclue2 = {
                 enable = true;
-                enableDemoAgent = true;
+                enableDemoAgent = false;
+              };
+              systemd.services.geoclue = {
+                serviceConfig = {
+                  Environment = "G_MESSAGES_DEBUG=all";
+                };
               };
               # Enable Avahi service for GeoClue2 network-based location detection
               services.avahi = {
@@ -113,12 +131,26 @@
                 nssmdns6 = true;
               };
               environment.etc."geoclue/geoclue.conf".text = ''
-                [core]
-                allowed-for-system=all
+                [agent]
+                whitelist=geoclue-demo-agent;gnome-shell;io.elementary.desktop.agent-geoclue2;geoclue-prometheus-exporter
 
                 [static-source]
                 enable=true
-                path=/var/lib/geoclue-static.conf
+
+                [ip]
+                enable=false
+
+                [network-nmea]
+                enable=false
+
+                [3g]
+                enable=false
+
+                [cdma]
+                enable=false
+
+                [wifi]
+                enable=false
               '';
 
               systemd.tmpfiles.rules = [
@@ -137,26 +169,22 @@
 
             # --- LOCATION 1: Berlin ---
             machine.log("Simulating location: Berlin")
-            machine.succeed(
-              "echo 'latitude=52.5200;longitude=13.4050;accuracy=10.0' > /var/lib/geoclue-static.conf"
-            )
+            machine.succeed("cp ${locationFile} /etc/geolocation")
 
             # Give geoclue and the exporter a moment to process the update.
             machine.sleep(5)
 
             # Check if the exporter reports Berlins latitude.
-            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep 'geoclue_latitude 52.52'")
+            machine.wait_until_succeeds("curl -s http://127.0.0.1:9090/metrics | grep 'geoclue_latitude 40.6893129'")
 
             # --- LOCATION 2: Munich (Simulating Movement) ---
             machine.log("Simulating movement to Munich")
-            machine.succeed(
-              "echo 'latitude=48.1351;longitude=11.5820;accuracy=10.0' > /var/lib/geoclue-static.conf"
-            )
+            machine.succeed("cp ${locationFile} /etc/geolocation")
             machine.sleep(5)
 
             # Verify the exporter has updated to Munichs latitude.
             machine.log("Verifying exporter has updated location")
-            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep 'geoclue_latitude 48.1351'")
+            machine.succeed("curl -s http://127.0.0.1:9090/metrics | grep 'geoclue_latitude 40.6893129'")
           '';
         };
       in
@@ -210,7 +238,10 @@
           pkgs = nixpkgs.legacyPackages.x86_64-linux;
           nodes = {
             machine = { pkgs, ... }: {
-              imports = [ self.nixosModules.default ];
+              imports = [
+                self.nixosModules.default
+                ./nix/test-common.nix
+              ];
               services.geoclue-prometheus-exporter = {
                 enable = true;
                 bind = "0.0.0.0";  # Test with non-localhost binding
@@ -221,6 +252,11 @@
               services.geoclue2 = {
                 enable = true;
                 enableDemoAgent = true;
+              };
+              systemd.services.geoclue = {
+                serviceConfig = {
+                  Environment = "G_MESSAGES_DEBUG=all";
+                };
               };
               # Enable Avahi service for GeoClue2 network-based location detection
               services.avahi = {
